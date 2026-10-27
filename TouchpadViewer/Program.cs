@@ -30,6 +30,15 @@ namespace TouchpadViewer
         public const int HidP_Input = 0;
         public const int HIDP_STATUS_SUCCESS = 0x00110000;
 
+        // 二重起動したとき、2つ目から1つ目へ「ウィンドウを表示して」と伝えるための登録メッセージ
+        public static readonly uint WM_SHOW_EXISTING = RegisterWindowMessage("TouchpadGestures.ShowWindow");
+
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        public static extern uint RegisterWindowMessage(string name);
+
+        [DllImport("user32.dll")]
+        public static extern bool PostMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+
         [StructLayout(LayoutKind.Sequential)]
         public struct RAWINPUTDEVICE
         {
@@ -512,7 +521,7 @@ namespace TouchpadViewer
             Color.FromArgb(220, 160, 40), Color.FromArgb(150, 90, 200)
         };
 
-        public MainForm()
+        public MainForm(bool startInTray)
         {
             Text = "Touchpad Viewer (PTP Raw Input)";
             ClientSize = new Size(960, 560);
@@ -550,12 +559,7 @@ namespace TouchpadViewer
             btnOpen.Text = "設定ファイルを開く";
             btnOpen.Dock = DockStyle.Right;
             btnOpen.Width = 150;
-            btnOpen.Click += delegate
-            {
-                if (!File.Exists(ConfigPath)) LoadBindings(); // 見本を作る
-                if (File.Exists(ConfigPath))
-                    Process.Start(new ProcessStartInfo(ConfigPath) { UseShellExecute = true });
-            };
+            btnOpen.Click += delegate { OpenConfig(); };
 
             Panel bar = new Panel();
             bar.Dock = DockStyle.Bottom;
@@ -575,13 +579,25 @@ namespace TouchpadViewer
             timer.Interval = 16;
             timer.Tick += OnTick;
             timer.Start();
+
+            BuildTray();
+            FormClosing += OnFormClosingToTray;
+
+            // 非表示のまま起動しても Raw Input を受け取れるよう、ここでウィンドウハンドルだけ先に作る。
+            // (登録は OnHandleCreated で行う。通常の Show では Load まで待つことになり、トレイ起動では来ない)
+            allowVisible = !startInTray;
+            CreateHandle();
         }
 
-        protected override void OnLoad(EventArgs e)
+        protected override void OnHandleCreated(EventArgs e)
         {
-            base.OnLoad(e);
+            base.OnHandleCreated(e);
             CountPtpDevices();
-            LoadBindings();
+            if (!bindingsLoaded)
+            {
+                bindingsLoaded = true;
+                LoadBindings();
+            }
 
             Native.RAWINPUTDEVICE[] rid = new Native.RAWINPUTDEVICE[1];
             rid[0].UsagePage = 0x0D; // Digitizer
@@ -627,6 +643,10 @@ namespace TouchpadViewer
             if (m.Msg == Native.WM_INPUT)
             {
                 HandleRawInput(m.LParam);
+            }
+            else if ((uint)m.Msg == Native.WM_SHOW_EXISTING)
+            {
+                ShowFromTray(); // 2つ目のインスタンスからの依頼
             }
             else if (m.Msg == Native.WM_INPUT_DEVICE_CHANGE)
             {
@@ -707,7 +727,7 @@ namespace TouchpadViewer
                 flashText = ""; // 表示時間が過ぎたので消す
                 dirty = true;
             }
-            if (!dirty) return;
+            if (!dirty || !Visible) return; // トレイ常駐中 (非表示) は画面を更新しない。dirty は残すので表示時に反映される
             dirty = false;
             UpdateInfo();
             canvas.Invalidate();
@@ -770,6 +790,174 @@ namespace TouchpadViewer
             if (gestureLog.Count == 0) sb.AppendLine("(まだありません)");
             foreach (string line in gestureLog) sb.AppendLine(line);
             info.Text = sb.ToString();
+        }
+
+        // ---- トレイ常駐 ----
+        NotifyIcon tray;
+        ToolStripMenuItem miExec;
+        ToolStripMenuItem miAuto;
+        Icon iconOff;
+        Icon iconOn;
+        bool allowVisible = true;
+        bool exiting;
+        bool balloonShown;
+        bool bindingsLoaded;
+        readonly Gestures.AutoStart autoStart = new Gestures.AutoStart();
+
+        // 起動中の exe。`dotnet X.dll` で起動した場合は dotnet.exe になるので自動実行には使えない
+        static string ExePath { get { return Environment.ProcessPath; } }
+
+        static bool IsApphost()
+        {
+            return !string.Equals(Path.GetFileNameWithoutExtension(ExePath), "dotnet",
+                StringComparison.OrdinalIgnoreCase);
+        }
+
+        // トレイ起動のとき、Application.Run が最初に Show しても表示しない
+        protected override void SetVisibleCore(bool value)
+        {
+            base.SetVisibleCore(allowVisible && value);
+        }
+
+        // 小さなパッドの絵 + 右下の状態ランプ (灰: キー操作の実行 OFF / 緑: ON)
+        static Icon MakeIcon(Color lamp)
+        {
+            using (Bitmap bmp = new Bitmap(32, 32))
+            using (Graphics g = Graphics.FromImage(bmp))
+            {
+                g.SmoothingMode = SmoothingMode.AntiAlias;
+                g.Clear(Color.Transparent);
+                using (Brush body = new SolidBrush(Color.FromArgb(70, 70, 80)))
+                    g.FillRectangle(body, 2, 5, 28, 22);
+                using (Pen edge = new Pen(Color.FromArgb(200, 200, 210), 2f))
+                    g.DrawRectangle(edge, 2, 5, 28, 22);
+                using (Brush finger = new SolidBrush(Color.FromArgb(235, 235, 240)))
+                {
+                    g.FillEllipse(finger, 5, 10, 5, 5);
+                    g.FillEllipse(finger, 13, 10, 5, 5);
+                    g.FillEllipse(finger, 21, 10, 5, 5);
+                }
+                using (Brush dot = new SolidBrush(lamp))
+                    g.FillEllipse(dot, 19, 16, 12, 12);
+                return Icon.FromHandle(bmp.GetHicon());
+            }
+        }
+
+        void BuildTray()
+        {
+            iconOff = MakeIcon(Color.FromArgb(140, 140, 150));
+            iconOn = MakeIcon(Color.FromArgb(60, 200, 90));
+            Icon = iconOff;
+
+            ToolStripMenuItem miShow = new ToolStripMenuItem("ウィンドウを表示");
+            miShow.Click += delegate { ShowFromTray(); };
+
+            miExec = new ToolStripMenuItem("ジェスチャーでキー操作を実行");
+            miExec.Click += delegate { chkExec.Checked = !chkExec.Checked; };
+
+            ToolStripMenuItem miReload = new ToolStripMenuItem("設定を再読み込み");
+            miReload.Click += delegate { LoadBindings(); };
+
+            ToolStripMenuItem miOpen = new ToolStripMenuItem("設定ファイルを開く");
+            miOpen.Click += delegate { OpenConfig(); };
+
+            miAuto = new ToolStripMenuItem("Windows 起動時に自動実行");
+            miAuto.Click += OnToggleAutoStart;
+
+            ToolStripMenuItem miExit = new ToolStripMenuItem("終了");
+            miExit.Click += delegate { ExitApp(); };
+
+            ContextMenuStrip menu = new ContextMenuStrip();
+            menu.Items.AddRange(new ToolStripItem[] {
+                miShow, new ToolStripSeparator(),
+                miExec, miReload, miOpen, new ToolStripSeparator(),
+                miAuto, new ToolStripSeparator(),
+                miExit });
+            menu.Opening += delegate { RefreshAutoStartItem(); };
+
+            tray = new NotifyIcon();
+            tray.ContextMenuStrip = menu;
+            tray.DoubleClick += delegate { ShowFromTray(); };
+            tray.Visible = true;
+
+            chkExec.CheckedChanged += delegate { UpdateTrayState(); };
+            UpdateTrayState();
+        }
+
+        void UpdateTrayState()
+        {
+            bool on = chkExec.Checked;
+            miExec.Checked = on;
+            tray.Icon = on ? iconOn : iconOff;
+            tray.Text = "Touchpad Gestures (実行: " + (on ? "ON" : "OFF") + ")"; // 63文字まで
+        }
+
+        void RefreshAutoStartItem()
+        {
+            miAuto.Enabled = IsApphost();
+            miAuto.Checked = miAuto.Enabled && autoStart.IsEnabledFor(ExePath);
+        }
+
+        void OnToggleAutoStart(object s, EventArgs e)
+        {
+            try
+            {
+                if (autoStart.IsEnabledFor(ExePath))
+                {
+                    autoStart.Disable();
+                    tray.ShowBalloonTip(2000, "Touchpad Gestures", "自動実行を解除しました。", ToolTipIcon.Info);
+                }
+                else
+                {
+                    autoStart.Enable(ExePath, "--tray");
+                    tray.ShowBalloonTip(3000, "Touchpad Gestures",
+                        "自動実行を登録しました。\r\n" + ExePath, ToolTipIcon.Info);
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, ex.Message, "自動実行の設定に失敗しました", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        void OpenConfig()
+        {
+            if (!File.Exists(ConfigPath)) LoadBindings(); // 見本を作る
+            if (File.Exists(ConfigPath))
+                Process.Start(new ProcessStartInfo(ConfigPath) { UseShellExecute = true });
+        }
+
+        void ShowFromTray()
+        {
+            allowVisible = true;
+            Show();
+            if (WindowState == FormWindowState.Minimized) WindowState = FormWindowState.Normal;
+            Activate();
+        }
+
+        // ×ボタンでは終了せずトレイへ隠す。終了はトレイメニューの「終了」。
+        // 外部から WM_CLOSE を送られた場合 (CloseReason が UserClosing とは限らない) も隠す。
+        // OS のシャットダウンと Application.Exit だけは通す
+        void OnFormClosingToTray(object s, FormClosingEventArgs e)
+        {
+            if (exiting || e.CloseReason == CloseReason.WindowsShutDown
+                || e.CloseReason == CloseReason.ApplicationExitCall) return;
+            e.Cancel = true;
+            Hide();
+            if (!balloonShown)
+            {
+                balloonShown = true;
+                tray.ShowBalloonTip(2500, "Touchpad Gestures",
+                    "トレイに常駐しています。終了はトレイアイコンの右クリックから。", ToolTipIcon.Info);
+            }
+        }
+
+        void ExitApp()
+        {
+            exiting = true;
+            tray.Visible = false; // 終了後にアイコンが残らないように
+            tray.Dispose();
+            Application.Exit();
         }
 
         float PadXMax() { return (active != null && active.XMax > 0) ? active.XMax : 1500f; }
@@ -936,10 +1124,24 @@ namespace TouchpadViewer
     static class Program
     {
         [STAThread]
-        static void Main()
+        static void Main(string[] args)
         {
-            Application.EnableVisualStyles();
-            Application.Run(new MainForm());
+            bool startInTray = Array.IndexOf(args, "--tray") >= 0;
+
+            bool created;
+            using (System.Threading.Mutex single = new System.Threading.Mutex(true, "Local\\TouchpadGestures.SingleInstance", out created))
+            {
+                if (!created)
+                {
+                    // 既に常駐中: 手動で起動し直したときだけ、既存のウィンドウを出してもらう
+                    if (!startInTray)
+                        Native.PostMessage((IntPtr)0xFFFF, Native.WM_SHOW_EXISTING, IntPtr.Zero, IntPtr.Zero);
+                    return;
+                }
+
+                Application.EnableVisualStyles();
+                Application.Run(new MainForm(startInTray));
+            }
         }
     }
 }
