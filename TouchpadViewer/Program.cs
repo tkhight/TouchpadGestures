@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Drawing2D;
+using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Windows.Forms;
@@ -162,14 +163,15 @@ namespace TouchpadViewer
         // ReportID -> 指スロットごとの LinkCollection
         readonly Dictionary<byte, List<ushort>> fingerLinks = new Dictionary<byte, List<ushort>>();
 
-        List<Finger> current = new List<Finger>();
-        List<Finger> pending = new List<Finger>();
-        int remaining;
+        // Hybrid モードのレポート分割の組み立ては、HID に依存しない Gestures 側で行う
+        readonly Gestures.PtpFrameAssembler assembler = new Gestures.PtpFrameAssembler();
+        readonly List<Finger> current = new List<Finger>();
+        uint simScanTime;
 
         public int XMax { get; private set; }
         public int YMax { get; private set; }
-        public uint ScanTime { get; private set; }
-        public int ContactCount { get; private set; }
+        public uint ScanTime { get { return assembler.ScanTime; } }
+        public int ContactCount { get { return assembler.ContactCount; } }
         public string Name { get; private set; }
         public List<Finger> Fingers { get { return current; } }
 
@@ -258,62 +260,61 @@ namespace TouchpadViewer
         // 1レポートを食わせる。1フレーム(全指)が揃ったら true。
         // Hybrid モードでは 1フレームが複数レポートに分割され、
         // 先頭レポートだけ Contact Count に総数が入り、続きは 0 になる。
+        // 組み立ては Gestures.PtpFrameAssembler (単体テスト済み) が行い、ここは HID の解読だけ。
         public bool Feed(byte[] report)
         {
             List<ushort> links;
             if (!fingerLinks.TryGetValue(report[0], out links)) return false;
 
             uint rlen = (uint)report.Length;
-            uint count;
-            bool hasCount = Native.HidP_GetUsageValue(Native.HidP_Input, PageDigitizer, 0,
-                UsageContactCount, out count, preparsed, report, rlen) == Native.HIDP_STATUS_SUCCESS;
 
-            if (!hasCount)
-            {
-                // Contact Count が無い構成: 1レポート=1フレーム、全スロット有効とみなす
-                pending.Clear();
-                remaining = links.Count;
-                ContactCount = links.Count;
-            }
-            else if (count > 0)
-            {
-                pending.Clear();
-                remaining = (int)count;
-                ContactCount = (int)count;
-                uint st;
-                if (Native.HidP_GetUsageValue(Native.HidP_Input, PageDigitizer, 0,
-                    UsageScanTime, out st, preparsed, report, rlen) == Native.HIDP_STATUS_SUCCESS)
-                    ScanTime = st;
-            }
+            int? count = null;
+            uint c;
+            if (Native.HidP_GetUsageValue(Native.HidP_Input, PageDigitizer, 0,
+                UsageContactCount, out c, preparsed, report, rlen) == Native.HIDP_STATUS_SUCCESS)
+                count = (int)c;
 
-            int valid = Math.Min(links.Count, remaining);
-            for (int i = 0; i < valid; i++) ReadFinger(links[i], report, rlen);
-            remaining -= valid;
+            uint? scan = null;
+            uint st;
+            if (Native.HidP_GetUsageValue(Native.HidP_Input, PageDigitizer, 0,
+                UsageScanTime, out st, preparsed, report, rlen) == Native.HIDP_STATUS_SUCCESS)
+                scan = st;
 
-            if (valid == 0 && remaining == 0)
-            {
-                // 全員離れた空フレーム
-                current.Clear();
-                ContactCount = 0;
-                return true;
-            }
-            if (remaining == 0)
-            {
-                List<Finger> t = current; current = pending; pending = t;
-                return true;
-            }
-            return false;
+            List<Gestures.TouchSlot> slots = new List<Gestures.TouchSlot>();
+            foreach (ushort link in links) slots.Add(ReadSlot(link, report, rlen));
+
+            return FeedReport(new Gestures.PtpReport(count, scan, slots));
         }
 
-        void ReadFinger(ushort link, byte[] report, uint rlen)
+        // 解読済みレポートを組み立て器に渡し、フレームが完成したら current を更新する
+        bool FeedReport(Gestures.PtpReport report)
         {
+            if (!assembler.Feed(report)) return false;
+
+            current.Clear();
+            foreach (Gestures.TouchSlot s in assembler.Fingers)
+            {
+                Finger f = new Finger();
+                f.Id = s.Id;
+                f.X = s.X;
+                f.Y = s.Y;
+                current.Add(f);
+            }
+            return true;
+        }
+
+        // 読み取りに失敗したスロットは「触れていない」扱いにする
+        Gestures.TouchSlot ReadSlot(ushort link, byte[] report, uint rlen)
+        {
+            Gestures.TouchSlot none = new Gestures.TouchSlot(0, 0, 0, false);
+
             uint x, y, id;
             if (Native.HidP_GetUsageValue(Native.HidP_Input, PageGenericDesktop, link, UsageX,
-                out x, preparsed, report, rlen) != Native.HIDP_STATUS_SUCCESS) return;
+                out x, preparsed, report, rlen) != Native.HIDP_STATUS_SUCCESS) return none;
             if (Native.HidP_GetUsageValue(Native.HidP_Input, PageGenericDesktop, link, UsageY,
-                out y, preparsed, report, rlen) != Native.HIDP_STATUS_SUCCESS) return;
+                out y, preparsed, report, rlen) != Native.HIDP_STATUS_SUCCESS) return none;
             if (Native.HidP_GetUsageValue(Native.HidP_Input, PageDigitizer, link, UsageContactId,
-                out id, preparsed, report, rlen) != Native.HIDP_STATUS_SUCCESS) return;
+                out id, preparsed, report, rlen) != Native.HIDP_STATUS_SUCCESS) return none;
 
             ushort[] usages = new ushort[16];
             uint ulen = (uint)usages.Length;
@@ -324,13 +325,40 @@ namespace TouchpadViewer
                 for (int k = 0; k < ulen; k++)
                     if (usages[k] == UsageTipSwitch) { tip = true; break; }
             }
-            if (!tip) return;
+            return new Gestures.TouchSlot((int)id, (int)x, (int)y, tip);
+        }
 
-            Finger f = new Finger();
-            f.Id = (int)id;
-            f.X = (int)x;
-            f.Y = (int)y;
-            pending.Add(f);
+        // ---- 疑似デバイス: 実機なしで画面・判定・SendInput を通すためのもの ----
+        public static PtpDevice CreateSimulated(int xMax, int yMax)
+        {
+            PtpDevice dev = new PtpDevice(IntPtr.Zero);
+            dev.XMax = xMax;
+            dev.YMax = yMax;
+            dev.Name = "(simulated)";
+            return dev;
+        }
+
+        // 指の一覧を、実機と同じ「スロット数で分割した Hybrid レポート」に変換して流し込む。
+        // 先頭レポートに総数を入れ、続きは 0。余ったスロットはパディング。
+        public void SimulateFrame(IList<Finger> fingers, int slotsPerReport)
+        {
+            int n = fingers.Count;
+            int idx = 0;
+            bool first = true;
+            simScanTime += 160; // 約16ms (単位は100μs)
+            do
+            {
+                List<Gestures.TouchSlot> slots = new List<Gestures.TouchSlot>();
+                for (int k = 0; k < slotsPerReport; k++, idx++)
+                {
+                    if (idx < n)
+                        slots.Add(new Gestures.TouchSlot(fingers[idx].Id, fingers[idx].X, fingers[idx].Y, true));
+                    else
+                        slots.Add(new Gestures.TouchSlot(0, 0, 0, false));
+                }
+                FeedReport(new Gestures.PtpReport(first ? n : 0, first ? (uint?)simScanTime : null, slots));
+                first = false;
+            } while (idx < n);
         }
 
         public void Dispose()
@@ -366,25 +394,62 @@ namespace TouchpadViewer
 
         // 実行は既定で OFF。テスト中に意図せずキー入力が飛ばないようにする
         readonly CheckBox chkExec = new CheckBox();
-        readonly Gestures.GestureDispatcher dispatcher =
-            new Gestures.GestureDispatcher(BuildBindings(), new Gestures.Win32InputSender());
+        readonly Gestures.Win32InputSender sender = new Gestures.Win32InputSender();
+        Gestures.GestureDispatcher dispatcher;
 
-        static IEnumerable<Gestures.GestureBinding> BuildBindings()
+        // 疑似指モード: マウスで指を置き、実機と同じ経路 (分割レポート → 組み立て → 判定 → SendInput) に流す
+        readonly CheckBox chkSim = new CheckBox();
+        readonly PtpDevice simDevice = PtpDevice.CreateSimulated(1500, 1000);
+        readonly List<Finger> simFingers = new List<Finger>();
+        bool simMode;
+        bool simEmptyPending; // 全員離れたことを 1 回だけ流す
+        int simNextId = 1;
+        int simDrag = -1;
+        const int SimMaxFingers = 5;
+        const int SimSlotsPerReport = 4; // 5本指が2レポートに分割され、Hybrid の経路を通る
+
+        // 割り当ての設定ファイル。無ければ見本を書き出す
+        static string ConfigPath
         {
-            return new Gestures.GestureBinding[] {
-                new Gestures.GestureBinding(
-                    new Gestures.SlotSwipeSpec("3本指・左だけ←", 3, 0, Gestures.SwipeDirection.Left),
-                    new Gestures.HotkeyAction("Alt+Left")),
-                new Gestures.GestureBinding(
-                    new Gestures.SlotSwipeSpec("3本指・左だけ→", 3, 0, Gestures.SwipeDirection.Right),
-                    new Gestures.HotkeyAction("Alt+Right")),
-                new Gestures.GestureBinding(
-                    new Gestures.SlotSwipeSpec("3本指・右だけ↑", 3, 2, Gestures.SwipeDirection.Up),
-                    new Gestures.HotkeyAction("VolumeUp")),
-                new Gestures.GestureBinding(
-                    new Gestures.SlotSwipeSpec("3本指・右だけ↓", 3, 2, Gestures.SwipeDirection.Down),
-                    new Gestures.HotkeyAction("VolumeDown")),
-            };
+            get
+            {
+                return Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                    "TouchpadGestures", "gestures.json");
+            }
+        }
+
+        // 設定を読み直して dispatcher を作り替える。失敗したら直前の設定を維持する
+        void LoadBindings()
+        {
+            string path = ConfigPath;
+            try
+            {
+                if (!File.Exists(path))
+                {
+                    Directory.CreateDirectory(Path.GetDirectoryName(path));
+                    File.WriteAllText(path, Gestures.GestureConfig.SampleJson, new UTF8Encoding(false));
+                    AddLog("設定ファイルの見本を作成しました");
+                }
+                IReadOnlyList<Gestures.GestureBinding> bindings = Gestures.GestureConfig.Load(path);
+                dispatcher = new Gestures.GestureDispatcher(bindings, sender);
+                AddLog("設定を読み込みました: " + bindings.Count + "件");
+            }
+            catch (Exception ex)
+            {
+                if (dispatcher == null)
+                    dispatcher = new Gestures.GestureDispatcher(new Gestures.GestureBinding[0], sender);
+                AddLog("設定の読み込みに失敗しました");
+                MessageBox.Show(this, path + "\r\n\r\n" + ex.Message,
+                    "設定エラー (直前の設定を維持します)", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+            dirty = true;
+        }
+
+        // 表示用の判定結果と、割り当て側の判定結果を突き合わせるキー (名前は設定で変わるため)
+        static string SpecKey(Gestures.SlotSwipeSpec s)
+        {
+            return s.FingerCount + "|" + s.MovingSlot + "|" + s.Direction;
         }
 
         void AddLog(string line)
@@ -426,7 +491,7 @@ namespace TouchpadViewer
             {
                 try
                 {
-                    foreach (Gestures.SlotSwipeSpec s in dispatcher.Feed(frame)) executed.Add(s.Name);
+                    foreach (Gestures.SlotSwipeSpec s in dispatcher.Feed(frame)) executed.Add(SpecKey(s));
                 }
                 catch (Exception ex)
                 {
@@ -436,7 +501,7 @@ namespace TouchpadViewer
 
             foreach (Gestures.SlotSwipeSpec s in engine.Feed(frame))
             {
-                AddLog(s.Name + (executed.Contains(s.Name) ? "  ▶実行" : ""));
+                AddLog(s.Name + (executed.Contains(SpecKey(s)) ? "  ▶実行" : ""));
                 flashText = s.Name;
                 flashUntilMs = clock.ElapsedMilliseconds + 1200;
             }
@@ -464,15 +529,48 @@ namespace TouchpadViewer
                 System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
                 .SetValue(canvas, true, null);
             canvas.Paint += OnPaintCanvas;
+            canvas.MouseDown += OnCanvasMouseDown;
+            canvas.MouseMove += OnCanvasMouseMove;
+            canvas.MouseUp += delegate { simDrag = -1; };
 
             Controls.Add(canvas);
             Controls.Add(info);
 
             chkExec.Text = "ジェスチャーでキー操作を実行する (SendInput)";
-            chkExec.Dock = DockStyle.Bottom;
-            chkExec.Height = 30;
+            chkExec.Dock = DockStyle.Fill;
             chkExec.Padding = new Padding(8, 0, 0, 0);
-            Controls.Add(chkExec);
+
+            Button btnReload = new Button();
+            btnReload.Text = "設定を再読み込み";
+            btnReload.Dock = DockStyle.Right;
+            btnReload.Width = 140;
+            btnReload.Click += delegate { LoadBindings(); };
+
+            Button btnOpen = new Button();
+            btnOpen.Text = "設定ファイルを開く";
+            btnOpen.Dock = DockStyle.Right;
+            btnOpen.Width = 150;
+            btnOpen.Click += delegate
+            {
+                if (!File.Exists(ConfigPath)) LoadBindings(); // 見本を作る
+                if (File.Exists(ConfigPath))
+                    Process.Start(new ProcessStartInfo(ConfigPath) { UseShellExecute = true });
+            };
+
+            Panel bar = new Panel();
+            bar.Dock = DockStyle.Bottom;
+            bar.Height = 34;
+            bar.Controls.Add(chkExec);
+
+            chkSim.Text = "疑似指モード";
+            chkSim.Dock = DockStyle.Left;
+            chkSim.Width = 130;
+            chkSim.Padding = new Padding(8, 0, 0, 0);
+            chkSim.CheckedChanged += OnSimToggled;
+            bar.Controls.Add(chkSim);
+            bar.Controls.Add(btnReload);
+            bar.Controls.Add(btnOpen);
+            Controls.Add(bar);
 
             timer.Interval = 16;
             timer.Tick += OnTick;
@@ -483,6 +581,7 @@ namespace TouchpadViewer
         {
             base.OnLoad(e);
             CountPtpDevices();
+            LoadBindings();
 
             Native.RAWINPUTDEVICE[] rid = new Native.RAWINPUTDEVICE[1];
             rid[0].UsagePage = 0x0D; // Digitizer
@@ -543,6 +642,8 @@ namespace TouchpadViewer
 
         void HandleRawInput(IntPtr hRawInput)
         {
+            if (simMode) return; // 疑似指モード中は実機の入力と混ぜない
+
             uint headerSize = (uint)(8 + 2 * IntPtr.Size); // RAWINPUTHEADER
             uint size = 0;
             Native.GetRawInputData(hRawInput, Native.RID_INPUT, IntPtr.Zero, ref size, headerSize);
@@ -590,6 +691,10 @@ namespace TouchpadViewer
 
         void OnTick(object sender, EventArgs e)
         {
+            // 実機は指が止まっていても一定間隔でレポートを送ってくる。疑似指もそれに合わせて流し続ける
+            // (判定の「落ち着くまで待つ」などの時間条件が、フレームの到着で進むため)
+            if (simMode && (simFingers.Count > 0 || simEmptyPending)) PushSim();
+
             if (++tick >= 60) // 約1秒
             {
                 tick = 0;
@@ -626,6 +731,13 @@ namespace TouchpadViewer
         void UpdateInfo()
         {
             StringBuilder sb = new StringBuilder();
+            if (simMode)
+            {
+                sb.AppendLine("【疑似指モード】");
+                sb.AppendLine("左クリック : 指を置く / ドラッグで動かす");
+                sb.AppendLine("右クリック : 指を離す (空所で全員)");
+                sb.AppendLine();
+            }
             sb.AppendLine("PTP デバイス数 : " + ptpDeviceCount);
             if (registerError.Length > 0) sb.AppendLine(registerError);
             sb.AppendLine("フレーム/秒    : " + fps);
@@ -660,22 +772,122 @@ namespace TouchpadViewer
             info.Text = sb.ToString();
         }
 
+        float PadXMax() { return (active != null && active.XMax > 0) ? active.XMax : 1500f; }
+        float PadYMax() { return (active != null && active.YMax > 0) ? active.YMax : 1000f; }
+
+        // 描画とマウス操作で共有する、パッドを表す矩形 (画面座標)
+        RectangleF PadRect()
+        {
+            float aspect = PadXMax() / PadYMax();
+            float margin = 20f;
+            float aw = canvas.Width - margin * 2;
+            float ah = canvas.Height - margin * 2;
+            if (aw <= 0 || ah <= 0) return RectangleF.Empty;
+            if (aw / ah > aspect) aw = ah * aspect; else ah = aw / aspect;
+            return new RectangleF((canvas.Width - aw) / 2f, (canvas.Height - ah) / 2f, aw, ah);
+        }
+
+        void OnSimToggled(object s, EventArgs e)
+        {
+            simMode = chkSim.Checked;
+            simFingers.Clear();
+            simDrag = -1;
+            if (simMode)
+            {
+                active = simDevice;
+                simEmptyPending = true;
+                AddLog("疑似指モードを開始しました");
+            }
+            else
+            {
+                // 全員離れたフレームを流して判定器をリセットしてから、疑似デバイスを外す
+                simDevice.SimulateFrame(simFingers, SimSlotsPerReport);
+                RunGestures(simDevice);
+                active = null;
+                AddLog("疑似指モードを終了しました");
+            }
+            dirty = true;
+        }
+
+        // 疑似指の現在位置を 1 フレーム分、実機と同じ経路に流す
+        void PushSim()
+        {
+            simEmptyPending = false;
+            simDevice.SimulateFrame(simFingers, SimSlotsPerReport);
+            active = simDevice;
+            frames++;
+            dirty = true;
+            RunGestures(simDevice);
+        }
+
+        // 画面上の点 → パッド座標の指 (パッドの外は縁に丸める)
+        Finger MakeSimFinger(int id, Point p, RectangleF r)
+        {
+            float nx = Math.Max(0f, Math.Min(1f, (p.X - r.Left) / r.Width));
+            float ny = Math.Max(0f, Math.Min(1f, (p.Y - r.Top) / r.Height));
+            Finger f = new Finger();
+            f.Id = id;
+            f.X = (int)(nx * PadXMax());
+            f.Y = (int)(ny * PadYMax());
+            return f;
+        }
+
+        // クリック位置に近い疑似指のインデックス (無ければ -1)
+        int HitSimFinger(Point p, RectangleF r)
+        {
+            for (int i = simFingers.Count - 1; i >= 0; i--)
+            {
+                float fx = r.Left + simFingers[i].X / PadXMax() * r.Width;
+                float fy = r.Top + simFingers[i].Y / PadYMax() * r.Height;
+                float dx = p.X - fx, dy = p.Y - fy;
+                if (dx * dx + dy * dy <= 28f * 28f) return i;
+            }
+            return -1;
+        }
+
+        void OnCanvasMouseDown(object s, MouseEventArgs e)
+        {
+            if (!simMode) return;
+            RectangleF r = PadRect();
+            if (r.Width <= 0) return;
+
+            int hit = HitSimFinger(e.Location, r);
+            if (e.Button == MouseButtons.Right)
+            {
+                if (hit >= 0) simFingers.RemoveAt(hit); else simFingers.Clear();
+                simEmptyPending = simFingers.Count == 0;
+                simDrag = -1;
+            }
+            else if (e.Button == MouseButtons.Left)
+            {
+                if (hit < 0 && simFingers.Count < SimMaxFingers)
+                {
+                    simFingers.Add(MakeSimFinger(simNextId++, e.Location, r));
+                    hit = simFingers.Count - 1;
+                }
+                simDrag = hit;
+            }
+        }
+
+        void OnCanvasMouseMove(object s, MouseEventArgs e)
+        {
+            if (!simMode || simDrag < 0 || simDrag >= simFingers.Count) return;
+            if ((e.Button & MouseButtons.Left) == 0) return;
+            RectangleF r = PadRect();
+            if (r.Width <= 0) return;
+            simFingers[simDrag] = MakeSimFinger(simFingers[simDrag].Id, e.Location, r);
+        }
+
         void OnPaintCanvas(object sender, PaintEventArgs e)
         {
             Graphics g = e.Graphics;
             g.SmoothingMode = SmoothingMode.AntiAlias;
 
-            float xmax = (active != null && active.XMax > 0) ? active.XMax : 1500f;
-            float ymax = (active != null && active.YMax > 0) ? active.YMax : 1000f;
-            float aspect = xmax / ymax;
-
-            float margin = 20f;
-            float aw = canvas.Width - margin * 2;
-            float ah = canvas.Height - margin * 2;
-            if (aw <= 0 || ah <= 0) return;
-            if (aw / ah > aspect) aw = ah * aspect; else ah = aw / aspect;
-            float left = (canvas.Width - aw) / 2f;
-            float top = (canvas.Height - ah) / 2f;
+            float xmax = PadXMax();
+            float ymax = PadYMax();
+            RectangleF pad = PadRect();
+            if (pad.Width <= 0) return;
+            float left = pad.Left, top = pad.Top, aw = pad.Width, ah = pad.Height;
 
             using (Brush padBrush = new SolidBrush(Color.FromArgb(52, 52, 60)))
             using (Pen padPen = new Pen(Color.FromArgb(120, 120, 130), 2f))
