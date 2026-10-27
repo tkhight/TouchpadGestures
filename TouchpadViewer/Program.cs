@@ -364,6 +364,35 @@ namespace TouchpadViewer
         string flashText = "";
         long flashUntilMs;
 
+        // 実行は既定で OFF。テスト中に意図せずキー入力が飛ばないようにする
+        readonly CheckBox chkExec = new CheckBox();
+        readonly Gestures.GestureDispatcher dispatcher =
+            new Gestures.GestureDispatcher(BuildBindings(), new Gestures.Win32InputSender());
+
+        static IEnumerable<Gestures.GestureBinding> BuildBindings()
+        {
+            return new Gestures.GestureBinding[] {
+                new Gestures.GestureBinding(
+                    new Gestures.SlotSwipeSpec("3本指・左だけ←", 3, 0, Gestures.SwipeDirection.Left),
+                    new Gestures.HotkeyAction("Alt+Left")),
+                new Gestures.GestureBinding(
+                    new Gestures.SlotSwipeSpec("3本指・左だけ→", 3, 0, Gestures.SwipeDirection.Right),
+                    new Gestures.HotkeyAction("Alt+Right")),
+                new Gestures.GestureBinding(
+                    new Gestures.SlotSwipeSpec("3本指・右だけ↑", 3, 2, Gestures.SwipeDirection.Up),
+                    new Gestures.HotkeyAction("VolumeUp")),
+                new Gestures.GestureBinding(
+                    new Gestures.SlotSwipeSpec("3本指・右だけ↓", 3, 2, Gestures.SwipeDirection.Down),
+                    new Gestures.HotkeyAction("VolumeDown")),
+            };
+        }
+
+        void AddLog(string line)
+        {
+            gestureLog.Insert(0, DateTime.Now.ToString("HH:mm:ss") + "  " + line);
+            if (gestureLog.Count > 8) gestureLog.RemoveAt(gestureLog.Count - 1);
+        }
+
         static IEnumerable<Gestures.SlotSwipeSpec> BuildSpecs()
         {
             // 2〜4本指 × 左から k 番目の指だけ × 4方向 をすべて登録する
@@ -391,10 +420,23 @@ namespace TouchpadViewer
                 contacts.Add(new Gestures.Contact(f.Id, f.X / scale, f.Y / scale));
 
             Gestures.Frame frame = new Gestures.Frame(clock.ElapsedMilliseconds, contacts);
+            // 割り当て済みのジェスチャーは、チェックが入っているときだけ SendInput で実行する
+            HashSet<string> executed = new HashSet<string>();
+            if (chkExec.Checked)
+            {
+                try
+                {
+                    foreach (Gestures.SlotSwipeSpec s in dispatcher.Feed(frame)) executed.Add(s.Name);
+                }
+                catch (Exception ex)
+                {
+                    AddLog("実行エラー: " + ex.Message);
+                }
+            }
+
             foreach (Gestures.SlotSwipeSpec s in engine.Feed(frame))
             {
-                gestureLog.Insert(0, DateTime.Now.ToString("HH:mm:ss") + "  " + s.Name);
-                if (gestureLog.Count > 8) gestureLog.RemoveAt(gestureLog.Count - 1);
+                AddLog(s.Name + (executed.Contains(s.Name) ? "  ▶実行" : ""));
                 flashText = s.Name;
                 flashUntilMs = clock.ElapsedMilliseconds + 1200;
             }
@@ -425,6 +467,12 @@ namespace TouchpadViewer
 
             Controls.Add(canvas);
             Controls.Add(info);
+
+            chkExec.Text = "ジェスチャーでキー操作を実行する (SendInput)";
+            chkExec.Dock = DockStyle.Bottom;
+            chkExec.Height = 30;
+            chkExec.Padding = new Padding(8, 0, 0, 0);
+            Controls.Add(chkExec);
 
             timer.Interval = 16;
             timer.Tick += OnTick;
