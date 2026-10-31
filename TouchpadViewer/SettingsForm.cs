@@ -52,6 +52,7 @@ namespace TouchpadViewer
         readonly RadioButton rbSwipe = new RadioButton();
         readonly RadioButton rbTap = new RadioButton();
         readonly RadioButton rbPinch = new RadioButton();
+        readonly RadioButton rbLand = new RadioButton();
         readonly GroupBox grpSwipe = new GroupBox();
         readonly FlowLayoutPanel fingerRow = new FlowLayoutPanel();
         readonly List<ComboBox> fingerCombos = new List<ComboBox>();
@@ -59,6 +60,9 @@ namespace TouchpadViewer
         readonly ComboBox cboTapSlot = new ComboBox();
         readonly NumericUpDown numTapCount = new NumericUpDown();
         readonly GroupBox grpPinch = new GroupBox();
+        readonly GroupBox grpLand = new GroupBox();
+        readonly FlowLayoutPanel landRow = new FlowLayoutPanel();
+        readonly List<ComboBox> landCombos = new List<ComboBox>();
         readonly ComboBox cboPinch = new ComboBox();
         readonly RadioButton rbHotkey = new RadioButton();
         readonly RadioButton rbWheel = new RadioButton();
@@ -182,8 +186,9 @@ namespace TouchpadViewer
             rbSwipe.Text = "スワイプ"; rbSwipe.AutoSize = true; rbSwipe.Location = new Point(90, 100);
             rbTap.Text = "タップ"; rbTap.AutoSize = true; rbTap.Location = new Point(190, 100);
             rbPinch.Text = "ピンチ"; rbPinch.AutoSize = true; rbPinch.Location = new Point(280, 100);
+            rbLand.Text = "着地順"; rbLand.AutoSize = true; rbLand.Location = new Point(370, 100);
             rbSwipe.Checked = true;
-            basic.Controls.AddRange(new Control[] { rbSwipe, rbTap, rbPinch });
+            basic.Controls.AddRange(new Control[] { rbSwipe, rbTap, rbPinch, rbLand });
             flow.Controls.Add(basic);
 
             // スワイプ: 指ごとの動き
@@ -226,6 +231,16 @@ namespace TouchpadViewer
             cboPinch.Width = 130;
             grpPinch.Controls.Add(cboPinch);
             flow.Controls.Add(grpPinch);
+
+            // 着地順: 着地した順に、その指が左から何番目か
+            grpLand.Text = "着地する順番 (全員が触れたままで、最後の指が着地したときに発火)";
+            grpLand.Width = 520;
+            grpLand.Height = 105;
+            landRow.Location = new Point(10, 22);
+            landRow.Size = new Size(500, 76);
+            landRow.WrapContents = true;
+            grpLand.Controls.Add(landRow);
+            flow.Controls.Add(grpLand);
 
             // 動作
             GroupBox grpAction = new GroupBox { Text = "動作", Width = 520, Height = 110 };
@@ -273,6 +288,7 @@ namespace TouchpadViewer
             rbSwipe.CheckedChanged += delegate { OnKindChanged(); };
             rbTap.CheckedChanged += delegate { OnKindChanged(); };
             rbPinch.CheckedChanged += delegate { OnKindChanged(); };
+            rbLand.CheckedChanged += delegate { OnKindChanged(); };
             cboTapSlot.SelectedIndexChanged += changed;
             numTapCount.ValueChanged += changed;
             cboPinch.SelectedIndexChanged += changed;
@@ -319,6 +335,13 @@ namespace TouchpadViewer
                 Get = e => e.SettleMs, Set = (e, v) => e.SettleMs = v == null ? (long?)null : (long)v.Value });
             thresholds.Add(new Threshold { Label = "repeatDistance (連続発火の間隔)", Default = "なし (1回だけ)", Kinds = swPn,
                 Get = e => e.RepeatDistance, Set = (e, v) => e.RepeatDistance = v });
+            GestureKind[] ld = { GestureKind.LandOrder };
+            thresholds.Add(new Threshold { Label = "landMinGapMs (着地の最短間隔 ms)", Default = "80", IsInteger = true, Kinds = ld,
+                Get = e => e.LandMinGapMs, Set = (e, v) => e.LandMinGapMs = v == null ? (long?)null : (long)v.Value });
+            thresholds.Add(new Threshold { Label = "landMaxGapMs (着地の最長間隔 ms)", Default = "500", IsInteger = true, Kinds = ld,
+                Get = e => e.LandMaxGapMs, Set = (e, v) => e.LandMaxGapMs = v == null ? (long?)null : (long)v.Value });
+            thresholds.Add(new Threshold { Label = "landMaxMove (着地後の動き)", Default = "0.03", Kinds = ld,
+                Get = e => e.LandMaxMove, Set = (e, v) => e.LandMaxMove = v });
             thresholds.Add(new Threshold { Label = "maxTapMs (タップの長さ ms)", Default = "250", IsInteger = true, Kinds = tp,
                 Get = e => e.MaxTapMs, Set = (e, v) => e.MaxTapMs = v == null ? (long?)null : (long)v.Value });
             thresholds.Add(new Threshold { Label = "maxGapMs (回数の間隔 ms)", Default = "300", IsInteger = true, Kinds = tp,
@@ -488,7 +511,8 @@ namespace TouchpadViewer
 
         GestureKind CurrentKind()
         {
-            return rbTap.Checked ? GestureKind.Tap : rbPinch.Checked ? GestureKind.Pinch : GestureKind.Swipe;
+            return rbTap.Checked ? GestureKind.Tap : rbPinch.Checked ? GestureKind.Pinch
+                : rbLand.Checked ? GestureKind.LandOrder : GestureKind.Swipe;
         }
 
         void ShowKindPanels()
@@ -497,6 +521,7 @@ namespace TouchpadViewer
             grpSwipe.Visible = k == GestureKind.Swipe;
             grpTap.Visible = k == GestureKind.Tap;
             grpPinch.Visible = k == GestureKind.Pinch;
+            grpLand.Visible = k == GestureKind.LandOrder;
             LayoutThresholds();
         }
 
@@ -531,6 +556,24 @@ namespace TouchpadViewer
             }
             fingerRow.ResumeLayout();
 
+            int[] oldLand = landCombos.Select(c => c.SelectedIndex).ToArray();
+            landRow.SuspendLayout();
+            landRow.Controls.Clear();
+            landCombos.Clear();
+            for (int i = 0; i < n; i++)
+            {
+                Panel cell = new Panel { Width = 100, Height = 52 };
+                cell.Controls.Add(new Label { Text = (i + 1) + "番目に着地", AutoSize = true, Location = new Point(0, 0) });
+                ComboBox combo = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 92, Location = new Point(0, 22) };
+                for (int k = 0; k < n; k++) combo.Items.Add("左から" + (k + 1) + "番目");
+                combo.SelectedIndex = i < oldLand.Length && oldLand[i] >= 0 && oldLand[i] < n ? oldLand[i] : i;
+                combo.SelectedIndexChanged += delegate { if (!loading && cur != null) Apply(); };
+                cell.Controls.Add(combo);
+                landCombos.Add(combo);
+                landRow.Controls.Add(cell);
+            }
+            landRow.ResumeLayout();
+
             int keep = Math.Max(cboTapSlot.SelectedIndex, 0);
             cboTapSlot.Items.Clear();
             for (int i = 0; i < n; i++) cboTapSlot.Items.Add("左から" + (i + 1) + "番目");
@@ -551,6 +594,7 @@ namespace TouchpadViewer
             rbSwipe.Checked = kind == GestureKind.Swipe;
             rbTap.Checked = kind == GestureKind.Tap;
             rbPinch.Checked = kind == GestureKind.Pinch;
+            rbLand.Checked = kind == GestureKind.LandOrder;
 
             // 指ごとの動きは、先に今の入力欄の指の数に合わせてから、entry の値を入れる
             fingerCombos.Clear();
@@ -559,6 +603,11 @@ namespace TouchpadViewer
             for (int i = 0; i < fingerCombos.Count; i++)
                 fingerCombos[i].SelectedIndex = Math.Max(Array.IndexOf(MotionValues, i < motions.Length ? motions[i] : null), 0);
 
+            landCombos.Clear();
+            RebuildFingerControls();
+            if (e.LandOrder != null && e.LandOrder.Count == landCombos.Count)
+                for (int i = 0; i < landCombos.Count; i++)
+                    landCombos[i].SelectedIndex = Math.Min(Math.Max(e.LandOrder[i], 0), landCombos[i].Items.Count - 1);
             cboTapSlot.SelectedIndex = Math.Min(Math.Max(e.TapSlot ?? 0, 0), cboTapSlot.Items.Count - 1);
             numTapCount.Value = Math.Min(Math.Max(e.TapCount ?? 1, (int)numTapCount.Minimum), (int)numTapCount.Maximum);
             cboPinch.SelectedIndex = BindingEditing.GetPinchDirection(e) == PinchDirection.In ? 0 : 1;
@@ -609,6 +658,10 @@ namespace TouchpadViewer
             {
                 e.TapSlot = Math.Max(cboTapSlot.SelectedIndex, 0);
                 e.TapCount = (int)numTapCount.Value;
+            }
+            else if (kind == GestureKind.LandOrder)
+            {
+                e.LandOrder = landCombos.Select(c => Math.Max(c.SelectedIndex, 0)).ToList();
             }
             else
             {

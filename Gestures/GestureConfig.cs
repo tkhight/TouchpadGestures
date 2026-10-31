@@ -29,6 +29,9 @@ public static class GestureConfig
           // ピンチは pinch ("In" / "Out") で、fingers 本の指全体が閉じる/開くのを判定する
           //   pinchDistance (既定 0.05) / centroidTolerance / settleMs / repeatDistance は省略可
           //   例: { "fingers": 4, "pinch": "Out", "repeatDistance": 0.03, "action": { ... } }
+          // 着地順は landOrder (着地した順に、その指が左から何番目か。0 始まり)。fingers 本が全部触れたときに発火する
+          //   例: { "fingers": 3, "landOrder": [0, 1, 2], "action": { ... } } (左→中→右の順に置く)
+          //   landMinGapMs (既定 80) / landMaxGapMs (既定 500) / landMaxMove (既定 0.03) は省略可
           // タップは tapSlot (左から数えた番号) と tapCount (回数、省略で 1)。他の指は触れたまま、その指だけが
           //   触れて離れるのを数える。maxTapMs / maxGapMs / maxTapMove は省略可
           //   例: { "fingers": 3, "tapSlot": 0, "tapCount": 2, "action": { ... } }
@@ -141,6 +144,7 @@ public static class GestureConfig
             SwipeDirection?[]? motions = null;
             bool isTap = b.TapSlot is not null || b.TapCount is not null;
             bool isPinch = b.Pinch is not null;
+            bool isLand = b.LandOrder is not null;
             PinchDirection pinchDir = default;
             if (isPinch)
             {
@@ -162,7 +166,32 @@ public static class GestureConfig
             {
                 errors.Add($"{label}: pinchDistance / centroidTolerance は pinch と一緒にだけ指定できます");
             }
-            if (isPinch)
+            if (isLand)
+            {
+                if (isTap || isPinch) errors.Add($"{label}: landOrder と tapSlot / tapCount / pinch は一緒に指定できません");
+                if (b.Slot is not null || b.Direction is not null || b.Motions is not null || b.MinDistance is not null
+                    || b.FixedTolerance is not null || b.SettleMs is not null || b.RepeatDistance is not null)
+                    errors.Add($"{label}: 着地順には slot / direction / motions / minDistance / fixedTolerance / settleMs / repeatDistance は使えません");
+                if (b.MaxTapMs is not null || b.MaxGapMs is not null || b.MaxTapMove is not null)
+                    errors.Add($"{label}: maxTapMs / maxGapMs / maxTapMove はタップにだけ使えます");
+                if (b.Fingers < 2) errors.Add($"{label}: landOrder は 2 本以上の指で指定してください");
+                else if (b.Fingers >= 2 && (b.LandOrder!.Count != b.Fingers
+                         || !b.LandOrder.OrderBy(x => x).SequenceEqual(Enumerable.Range(0, b.Fingers.Value))))
+                    errors.Add($"{label}: landOrder は 0 〜 {b.Fingers - 1} を 1 つずつ使った、fingers と同じ {b.Fingers} 個の並びで指定してください (指定値: {string.Join(", ", b.LandOrder!)})");
+                if (b.LandMinGapMs < 0) errors.Add($"{label}: landMinGapMs は 0 以上にしてください");
+                if (b.LandMaxGapMs <= 0) errors.Add($"{label}: landMaxGapMs は 0 より大きい値にしてください");
+                if ((b.LandMinGapMs ?? 80) > (b.LandMaxGapMs ?? 500))
+                    errors.Add($"{label}: landMinGapMs は landMaxGapMs 以下にしてください");
+                if (b.LandMaxMove <= 0) errors.Add($"{label}: landMaxMove は 0 より大きい値にしてください");
+            }
+            else if (b.LandMinGapMs is not null || b.LandMaxGapMs is not null || b.LandMaxMove is not null)
+            {
+                errors.Add($"{label}: landMinGapMs / landMaxGapMs / landMaxMove は landOrder と一緒にだけ指定できます");
+            }
+            if (isLand)
+            {
+            }
+            else if (isPinch)
             {
                 if (b.MaxTapMs is not null || b.MaxGapMs is not null || b.MaxTapMove is not null)
                     errors.Add($"{label}: maxTapMs / maxGapMs / maxTapMove はタップにだけ使えます");
@@ -211,7 +240,17 @@ public static class GestureConfig
 
             int fingers = b.Fingers!.Value;
             IGestureSpec spec;
-            if (isPinch)
+            if (isLand)
+            {
+                var land = new LandOrderSpec(
+                    string.IsNullOrEmpty(b.Name) ? DefaultLandName(fingers, b.LandOrder!) : b.Name,
+                    fingers, b.LandOrder!.ToArray());
+                if (b.LandMinGapMs is long lmin) land = land with { MinGapMs = lmin };
+                if (b.LandMaxGapMs is long lmax) land = land with { MaxGapMs = lmax };
+                if (b.LandMaxMove is double lmv) land = land with { MaxMove = lmv };
+                spec = land;
+            }
+            else if (isPinch)
             {
                 var pin = new PinchSpec(
                     string.IsNullOrEmpty(b.Name) ? $"{fingers}本指ピンチ{(pinchDir == PinchDirection.Out ? "アウト" : "イン")}" : b.Name,
@@ -353,6 +392,13 @@ public static class GestureConfig
     static string DefaultName(int fingers, int slot, SwipeDirection dir)
         => $"{fingers}本指・左から{slot + 1}番目だけ{Arrow(dir)}";
 
+    static string DefaultLandName(int fingers, IReadOnlyList<int> order)
+    {
+        string[]? names = fingers == 2 ? new[] { "左", "右" } : fingers == 3 ? new[] { "左", "中", "右" } : null;
+        string seq = string.Join("→", order.Select(o => names is null ? (o + 1).ToString() : names[o]));
+        return $"{fingers}本指・{seq}の順に着地";
+    }
+
     static string DefaultTapName(int fingers, int slot, int count)
         => $"{fingers}本指・左から{slot + 1}番目を{(count == 1 ? "" : count + "回")}タップ";
 
@@ -377,6 +423,10 @@ public sealed class BindingEntry
     public string? Pinch { get; set; }
     public double? PinchDistance { get; set; }
     public double? CentroidTolerance { get; set; }
+    public List<int>? LandOrder { get; set; }
+    public long? LandMinGapMs { get; set; }
+    public long? LandMaxGapMs { get; set; }
+    public double? LandMaxMove { get; set; }
     public int? TapSlot { get; set; }
     public int? TapCount { get; set; }
     public long? MaxTapMs { get; set; }
@@ -393,6 +443,7 @@ public sealed class BindingEntry
         Name = Name, App = App, Enabled = Enabled, Fingers = Fingers, Slot = Slot, Direction = Direction,
         Motions = Motions is null ? null : new List<string?>(Motions),
         Pinch = Pinch, PinchDistance = PinchDistance, CentroidTolerance = CentroidTolerance,
+        LandOrder = LandOrder is null ? null : new List<int>(LandOrder), LandMinGapMs = LandMinGapMs, LandMaxGapMs = LandMaxGapMs, LandMaxMove = LandMaxMove,
         TapSlot = TapSlot, TapCount = TapCount, MaxTapMs = MaxTapMs, MaxGapMs = MaxGapMs, MaxTapMove = MaxTapMove,
         MinDistance = MinDistance, FixedTolerance = FixedTolerance, SettleMs = SettleMs, RepeatDistance = RepeatDistance,
         Action = Action is null ? null : new ActionEntry { Hotkey = Action.Hotkey, Wheel = Action.Wheel, Horizontal = Action.Horizontal },
