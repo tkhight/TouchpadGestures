@@ -23,6 +23,7 @@ public sealed class Win32InputSender : IInputSender
         0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, // PgUp PgDn End Home ← ↑ → ↓
         0x2D, 0x2E, 0x2C,                               // Insert Delete PrintScreen
         0x5B, 0x5C,                                     // Win
+        0xA3, 0xA5,                                     // 右 Ctrl / 右 Alt
     };
 
     [StructLayout(LayoutKind.Sequential)]

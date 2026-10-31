@@ -49,6 +49,11 @@ namespace TouchpadViewer
         readonly ComboBox cboApp = new ComboBox();
         readonly NumericUpDown numFingers = new NumericUpDown();
         readonly CheckBox chkEnabled = new CheckBox();
+        readonly CheckBox chkUseMods = new CheckBox();
+        readonly CheckBox chkCtrl = new CheckBox();
+        readonly CheckBox chkAlt = new CheckBox();
+        readonly CheckBox chkShift = new CheckBox();
+        readonly CheckBox chkWin = new CheckBox();
         readonly RadioButton rbSwipe = new RadioButton();
         readonly RadioButton rbTap = new RadioButton();
         readonly RadioButton rbPinch = new RadioButton();
@@ -161,7 +166,7 @@ namespace TouchpadViewer
             };
 
             // 基本: 名前・アプリ・指の数・種類
-            Panel basic = new Panel { Width = 520, Height = 130 };
+            Panel basic = new Panel { Width = 520, Height = 164 };
             basic.Controls.Add(new Label { Text = "名前", AutoSize = true, Location = new Point(0, 8) });
             txtName.Location = new Point(90, 4);
             txtName.Width = 300;
@@ -195,6 +200,16 @@ namespace TouchpadViewer
             rbLand.Text = "着地順"; rbLand.AutoSize = true; rbLand.Location = new Point(370, 100);
             rbSwipe.Checked = true;
             basic.Controls.AddRange(new Control[] { rbSwipe, rbTap, rbPinch, rbLand });
+
+            chkUseMods.Text = "修飾キーを押しながら";
+            chkUseMods.AutoSize = true;
+            chkUseMods.Location = new Point(0, 134);
+            chkCtrl.Text = "Ctrl"; chkCtrl.AutoSize = true; chkCtrl.Location = new Point(170, 134);
+            chkAlt.Text = "Alt"; chkAlt.AutoSize = true; chkAlt.Location = new Point(228, 134);
+            chkShift.Text = "Shift"; chkShift.AutoSize = true; chkShift.Location = new Point(280, 134);
+            chkWin.Text = "Win"; chkWin.AutoSize = true; chkWin.Location = new Point(342, 134);
+            Label modsNote = new Label { Text = "(ちょうど一致)", AutoSize = true, Location = new Point(396, 136) };
+            basic.Controls.AddRange(new Control[] { chkUseMods, chkCtrl, chkAlt, chkShift, chkWin, modsNote });
             flow.Controls.Add(basic);
 
             // スワイプ: 指ごとの動き
@@ -319,6 +334,11 @@ namespace TouchpadViewer
             cboApp.Leave += delegate { if (!loading) { RefillFilter(SelectedFilter()); RefillList(cur); } };
             cboApp.DropDown += delegate { RefillAppChoices(); };
             chkEnabled.CheckedChanged += changed;
+            chkUseMods.CheckedChanged += delegate { UpdateModsEnabled(); if (!loading && cur != null) Apply(); };
+            chkCtrl.CheckedChanged += changed;
+            chkAlt.CheckedChanged += changed;
+            chkShift.CheckedChanged += changed;
+            chkWin.CheckedChanged += changed;
             numFingers.ValueChanged += delegate { if (!loading && cur != null) { RebuildFingerControls(); Apply(); } };
             rbSwipe.CheckedChanged += delegate { OnKindChanged(); };
             rbTap.CheckedChanged += delegate { OnKindChanged(); };
@@ -477,7 +497,7 @@ namespace TouchpadViewer
         {
             item.SubItems[0].Text = AppOf(e) ?? GlobalOnly;
             bool off = e.Enabled == false;
-            item.SubItems[1].Text = (off ? "(無効) " : "") + BindingEditing.DisplayName(e);
+            item.SubItems[1].Text = (off ? "(無効) " : "") + BindingEditing.ModifiersLabel(e) + BindingEditing.DisplayName(e);
             item.ForeColor = off ? SystemColors.GrayText : SystemColors.WindowText;
             item.SubItems[2].Text = BindingEditing.DescribeAction(e);
         }
@@ -629,6 +649,15 @@ namespace TouchpadViewer
             txtName.Text = e.Name ?? "";
             cboApp.Text = e.App ?? "";
             chkEnabled.Checked = e.Enabled != false;
+            KeyModifiers? mods = null;
+            try { mods = KeyModifierNames.ParseOrNull(e.Modifiers); }
+            catch (FormatException) { }
+            chkUseMods.Checked = mods != null;
+            chkCtrl.Checked = mods != null && mods.Value.HasFlag(KeyModifiers.Ctrl);
+            chkAlt.Checked = mods != null && mods.Value.HasFlag(KeyModifiers.Alt);
+            chkShift.Checked = mods != null && mods.Value.HasFlag(KeyModifiers.Shift);
+            chkWin.Checked = mods != null && mods.Value.HasFlag(KeyModifiers.Win);
+            UpdateModsEnabled();
             numFingers.Value = Math.Min(Math.Max(e.Fingers ?? 3, (int)numFingers.Minimum), (int)numFingers.Maximum);
 
             GestureKind kind = BindingEditing.KindOf(e);
@@ -682,6 +711,13 @@ namespace TouchpadViewer
             ShowValidation();
         }
 
+        // 修飾キーを指定しないときは、4 つのチェックは使えない
+        void UpdateModsEnabled()
+        {
+            bool on = chkUseMods.Checked;
+            chkCtrl.Enabled = chkAlt.Enabled = chkShift.Enabled = chkWin.Enabled = on;
+        }
+
         static string NullIfEmpty(string s)
         {
             return string.IsNullOrWhiteSpace(s) ? null : s.Trim();
@@ -697,6 +733,19 @@ namespace TouchpadViewer
             e.Name = NullIfEmpty(txtName.Text);
             e.App = NullIfEmpty(cboApp.Text);
             e.Enabled = chkEnabled.Checked ? (bool?)null : false;
+            if (chkUseMods.Checked)
+            {
+                KeyModifiers m = KeyModifiers.None;
+                if (chkCtrl.Checked) m |= KeyModifiers.Ctrl;
+                if (chkAlt.Checked) m |= KeyModifiers.Alt;
+                if (chkShift.Checked) m |= KeyModifiers.Shift;
+                if (chkWin.Checked) m |= KeyModifiers.Win;
+                e.Modifiers = KeyModifierNames.Format(m);
+            }
+            else
+            {
+                e.Modifiers = null;
+            }
             e.Fingers = (int)numFingers.Value;
             BindingEditing.ClearGesture(e);
 

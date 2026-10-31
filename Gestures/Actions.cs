@@ -329,8 +329,10 @@ public static class AppNames
 /// <summary>
 /// ジェスチャー定義と動作の対応。App が null ならどのアプリでも有効。
 /// 値があれば、そのアプリ (プロセス名) が前面のときだけ有効で、同じジェスチャーの App なしの割り当てより優先される。
+/// Modifiers が null ならどの修飾キーの状態でも有効。値があれば、その修飾キーが「ちょうど」押されているときだけ有効
+/// (KeyModifiers.None は「どれも押していない」)。同じジェスチャーなら、条件の多い割り当てが優先される。
 /// </summary>
-public sealed record GestureBinding(IGestureSpec Spec, IGestureAction Action, string? App = null)
+public sealed record GestureBinding(IGestureSpec Spec, IGestureAction Action, string? App = null, KeyModifiers? Modifiers = null)
 {
     /// <summary>スワイプの定義のとき。それ以外は null。</summary>
     public SlotSwipeSpec? Swipe => Spec as SlotSwipeSpec;
@@ -348,25 +350,44 @@ public sealed class GestureDispatcher
     readonly List<(GestureBinding Binding, string? App, IGestureRecognizer Recognizer)> _entries;
     readonly IInputSender _sender;
     readonly Func<string?>? _foregroundApp;
+    readonly Func<KeyModifiers>? _modifierState;
+    readonly Func<IReadOnlyList<ushort>>? _heldModifierKeys;
+    readonly Dictionary<IHoldAction, ushort[]> _holdRestore = new();
+
+    // Win / Alt を離すときに、スタートメニュー / メニューバーが開かないようにする印のキー (ClickAction と同じ)
+    const ushort MaskKey = 0xE8;
 
     /// <summary>最後に発火したときの前面アプリ名 (正規化済み)。取れなかった/発火が無いときは null。</summary>
     public string? LastApp { get; private set; }
 
+    /// <summary>最後に発火したときに押されていた修飾キー。</summary>
+    public KeyModifiers LastModifiers { get; private set; }
+
     /// <param name="foregroundApp">前面アプリ名を返す。発火したときだけ呼ばれる。null なら App 付きの割り当ては働かない。</param>
-    /// <exception cref="ArgumentException">同じアプリ・同じ定義に複数の動作を割り当てたとき。</exception>
-    public GestureDispatcher(IEnumerable<GestureBinding> bindings, IInputSender sender, Func<string?>? foregroundApp = null)
+    /// <param name="modifierState">今押されている修飾キーを返す。発火したときだけ呼ばれる。null なら「どれも押していない」とみなす。</param>
+    /// <exception cref="ArgumentException">同じアプリ・同じ修飾キー・同じ定義に複数の動作を割り当てたとき。</exception>
+    /// <param name="heldModifierKeys">
+    /// 今押されている修飾キーを、左右を区別した仮想キーコードで返す。修飾キーを条件にした割り当ての動作を送る間、
+    /// これを離して、送り終わったら押し直す (Ctrl を押したまま Win+Up を送ると Ctrl+Win+Up になってしまうため)。
+    /// null なら、modifierState の値から左側のキーを使う。
+    /// </param>
+    public GestureDispatcher(IEnumerable<GestureBinding> bindings, IInputSender sender,
+        Func<string?>? foregroundApp = null, Func<KeyModifiers>? modifierState = null,
+        Func<IReadOnlyList<ushort>>? heldModifierKeys = null)
     {
-        var seen = new HashSet<(string?, IGestureSpec)>();
+        var seen = new HashSet<(string?, KeyModifiers?, IGestureSpec)>();
         _entries = new();
         foreach (var b in bindings)
         {
             var app = AppNames.Normalize(b.App);
-            if (!seen.Add((app, b.Spec)))
+            if (!seen.Add((app, b.Modifiers, b.Spec)))
                 throw new ArgumentException("同じ定義に複数の動作が割り当てられています: " + b.Spec.Name);
             _entries.Add((b, app, GestureEngine.Create(b.Spec)));
         }
         _sender = sender;
         _foregroundApp = foregroundApp;
+        _modifierState = modifierState;
+        _heldModifierKeys = heldModifierKeys;
     }
 
     /// <summary>
@@ -383,30 +404,46 @@ public sealed class GestureDispatcher
             if (r.Feed(frame)) hits.Add((b, app, r.LastFireCount));
 
         LastApp = null;
+        LastModifiers = KeyModifiers.None;
         var fired = new List<IGestureSpec>();
         if (hits.Count == 0) return fired;
 
         var current = AppNames.Normalize(_foregroundApp?.Invoke());
+        var mods = _modifierState?.Invoke() ?? KeyModifiers.None;
         LastApp = current;
-        var run = new List<(IGestureAction Action, int Count)>();
+        LastModifiers = mods;
+        var run = new List<(IGestureAction Action, int Count, KeyModifiers? BindingMods)>();
         foreach (var (b, app, count) in hits)
         {
-            if (!IsActive(b, app, current)) continue;
+            if (!IsActive(b, app, current, mods)) continue;
             for (int i = 0; i < count; i++) fired.Add(b.Spec);
-            run.Add((b.Action, count));
+            run.Add((b.Action, count, b.Modifiers));
         }
         if (execute)
-            foreach (var (action, count) in run)
+            foreach (var (action, count, bindingMods) in run)
             {
+                // 修飾キーを条件にした割り当ては、押している修飾キーを、動作を送る間だけ離す
+                var held = bindingMods is { } bm && bm != KeyModifiers.None ? HeldKeys(mods) : Array.Empty<ushort>();
                 if (action is IHoldAction hold)
                 {
                     if (_holding.Contains(hold)) continue; // 押している最中の再発火 (連続発火など) は無視
-                    hold.Begin(frame, _sender);
+                    SuspendKeys(held);
+                    try { hold.Begin(frame, _sender); }
+                    catch { RestoreKeys(held); throw; }
                     _holding.Add(hold);
+                    if (held.Length > 0) _holdRestore[hold] = held;
                     if (!hold.Update(frame, _sender)) ReleaseOne(hold);
                     continue;
                 }
-                for (int i = 0; i < count; i++) action.Execute(_sender);
+                SuspendKeys(held);
+                try
+                {
+                    for (int i = 0; i < count; i++) action.Execute(_sender);
+                }
+                finally
+                {
+                    RestoreKeys(held);
+                }
             }
         return fired;
     }
@@ -427,7 +464,49 @@ public sealed class GestureDispatcher
     void ReleaseOne(IHoldAction h)
     {
         _holding.Remove(h);
-        h.End(_sender);
+        try
+        {
+            h.End(_sender);
+        }
+        finally
+        {
+            if (_holdRestore.Remove(h, out var held)) RestoreKeys(held);
+        }
+    }
+
+    ushort[] HeldKeys(KeyModifiers mods)
+    {
+        if (_heldModifierKeys is not null) return _heldModifierKeys().ToArray();
+        var keys = new List<ushort>();
+        if (mods.HasFlag(KeyModifiers.Ctrl)) keys.Add(0xA2);
+        if (mods.HasFlag(KeyModifiers.Shift)) keys.Add(0xA0);
+        if (mods.HasFlag(KeyModifiers.Alt)) keys.Add(0xA4);
+        if (mods.HasFlag(KeyModifiers.Win)) keys.Add(0x5B);
+        return keys.ToArray();
+    }
+
+    // 押されている修飾キーを離す。Win / Alt は、離したときにメニューが開かないよう、先に印のキーを押して離す
+    void SuspendKeys(ushort[] keys)
+    {
+        if (keys.Length == 0) return;
+        if (keys.Any(k => k is 0x5B or 0x5C or 0xA4 or 0xA5 or 0x12))
+        {
+            _sender.KeyDown(MaskKey);
+            _sender.KeyUp(MaskKey);
+        }
+        foreach (var k in keys) _sender.KeyUp(k);
+    }
+
+    // 離した修飾キーを、押し直す (まだ実際には押している前提)。1 つ失敗しても、残りは押し直す
+    void RestoreKeys(ushort[] keys)
+    {
+        Exception? first = null;
+        foreach (var k in keys)
+        {
+            try { _sender.KeyDown(k); }
+            catch (Exception ex) { first ??= ex; }
+        }
+        if (first is not null) throw first;
     }
 
     // 押し続けている動作に、このフレームを知らせる。全員の指が離れた・実行がオフになった・動作側が終わらせたいときは終わらせる
@@ -443,11 +522,19 @@ public sealed class GestureDispatcher
             if (!h.Update(frame, _sender)) ReleaseOne(h);
     }
 
-    bool IsActive(GestureBinding b, string? app, string? current)
+    static bool Matches(GestureBinding b, string? app, string? currentApp, KeyModifiers mods)
+        => (app is null || app == currentApp) && (b.Modifiers is null || b.Modifiers == mods);
+
+    // 条件が多いほど優先 (アプリ > 修飾キー)。0 = 条件なし、1 = 修飾キーだけ、2 = アプリだけ、3 = 両方
+    static int Score(GestureBinding b, string? app) => (app is not null ? 2 : 0) + (b.Modifiers is not null ? 1 : 0);
+
+    bool IsActive(GestureBinding b, string? app, string? currentApp, KeyModifiers mods)
     {
-        if (app is not null) return app == current;
-        // App なしは、同じジェスチャーに現在のアプリ専用の割り当てがあれば、それに譲る
-        if (current is null) return true;
-        return !_entries.Any(e => e.App == current && e.Binding.Spec.Key == b.Spec.Key);
+        if (!Matches(b, app, currentApp, mods)) return false;
+        // 同じジェスチャーに、今の状況に合う、より条件の多い割り当てがあれば、そちらに譲る
+        int score = Score(b, app);
+        return !_entries.Any(e => e.Binding.Spec.Key == b.Spec.Key
+            && Score(e.Binding, e.App) > score
+            && Matches(e.Binding, e.App, currentApp, mods));
     }
 }

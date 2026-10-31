@@ -471,7 +471,8 @@ namespace TouchpadViewer
                 }
                 IReadOnlyList<Gestures.GestureBinding> bindings = Gestures.GestureConfig.Load(path);
                 ReleaseHolds();
-                dispatcher = new Gestures.GestureDispatcher(bindings, sender, Gestures.ForegroundApp.GetProcessName);
+                dispatcher = new Gestures.GestureDispatcher(bindings, sender, Gestures.ForegroundApp.GetProcessName,
+                    Gestures.KeyboardState.GetModifiers, Gestures.KeyboardState.GetHeldModifierKeys);
                 AddLog("設定を読み込みました: " + bindings.Count + "件");
                 ok = true;
             }
@@ -541,7 +542,9 @@ namespace TouchpadViewer
                 repeatTotals[key] = ++total;
                 if (total == 1)
                     AddLog(s.Name + (execute ? "  ▶実行" : "") +
-                        (dispatcher.LastApp == null ? "" : "  [" + dispatcher.LastApp + "]"));
+                        (dispatcher.LastApp == null ? "" : "  [" + dispatcher.LastApp + "]") +
+                        (dispatcher.LastModifiers == Gestures.KeyModifiers.None ? ""
+                            : "  <" + Gestures.KeyModifierNames.Format(dispatcher.LastModifiers) + ">"));
                 flashText = total > 1 ? s.Name + " ×" + total : s.Name; // 連続発火は「× 回数」
                 flashUntilMs = clock.ElapsedMilliseconds + 1200;
             }

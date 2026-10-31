@@ -96,6 +96,20 @@ public static class BindingEditing
         all.Insert(to, item);
     }
 
+    /// <summary>一覧に出す、修飾キーの条件。条件がない (または読めない) ときは空。</summary>
+    public static string ModifiersLabel(BindingEntry e)
+    {
+        try
+        {
+            var m = KeyModifierNames.ParseOrNull(e.Modifiers);
+            return m is null ? "" : "(" + KeyModifierNames.Format(m.Value) + ") ";
+        }
+        catch (FormatException)
+        {
+            return "(" + e.Modifiers + "?) ";
+        }
+    }
+
     /// <summary>一覧に出す、動作の説明。</summary>
     public static string DescribeAction(BindingEntry e)
     {

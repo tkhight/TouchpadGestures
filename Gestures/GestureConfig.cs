@@ -40,6 +40,10 @@ public static class GestureConfig
           //   click に "hold": true を足すと、押したままにして、全部の指が離れたら離す (指の動きでカーソルも動く。"follow": false で止める)
           //   hold と count を一緒に書くと、count 回目を押したままにする (count: 2 = 1 回タップして、2 回目を押したまま = ダブルタップして押したまま)
           //   例: PowerToys の「つかんで移動」: "action": { "hotkey": "Win", "click": "Left", "count": 2, "hold": true }
+          // modifiers を付けると、その修飾キーをキーボードで押しているときだけ有効になる。"Ctrl" / "Ctrl+Shift" (Ctrl / Alt / Shift / Win)
+          //   ちょうどその組み合わせのときだけ。"none" = どの修飾キーも押していないとき。省略 = 押していても押していなくても有効
+          //   同じジェスチャーに修飾キー付きと省略のものがあれば、押している修飾キーに合う付きのほうが優先される
+          //   例: { "modifiers": "Ctrl", "fingers": 3, "slot": 0, "direction": "Left", "action": { ... } }
           // "enabled": false を付けると、その割り当てだけを一時的に無効にできる (省略 = 有効)
           // app を付けると、そのアプリ (プロセス名。"chrome" / "Code.exe" など) が前面のときだけ有効になる。
           //   同じジェスチャーが app なしにもあるときは、app 付きが優先される。プロセス名は画面のログに [ ] で出る
@@ -145,6 +149,19 @@ public static class GestureConfig
             if (b.Fingers is null || b.Fingers < 1) errors.Add($"{label}: fingers は 1 以上の整数で指定してください");
             string? app = AppNames.Normalize(b.App);
             if (b.App is not null && app is null) errors.Add($"{label}: app が空です (全アプリで有効にするなら項目ごと省く)");
+            KeyModifiers? mods = null;
+            if (b.Modifiers is not null)
+            {
+                try
+                {
+                    if (string.IsNullOrWhiteSpace(b.Modifiers)) throw new FormatException("modifiers が空です (問わないなら項目ごと省く。どれも押さないなら none)");
+                    mods = KeyModifierNames.Parse(b.Modifiers);
+                }
+                catch (FormatException ex)
+                {
+                    errors.Add($"{label}: {ex.Message}");
+                }
+            }
             SwipeDirection dir = default;
             SwipeDirection?[]? motions = null;
             bool isTap = b.TapSlot is not null || b.TapCount is not null;
@@ -294,10 +311,10 @@ public static class GestureConfig
             // 無効な割り当ては、内容だけ確かめて、重複の判定にも結果にも入れない (同じジェスチャーの別の動作と切り替えて使える)
             if (b.Enabled == false) continue;
 
-            string seenKey = (app ?? "") + "|" + spec.Key;
+            string seenKey = (app ?? "") + "|" + (mods is null ? "" : KeyModifierNames.Format(mods.Value)) + "|" + spec.Key;
             if (seen.TryGetValue(seenKey, out var other))
             {
-                errors.Add($"{label}: {other} と同じ指の組み合わせ・方向が重複しています" + (app is null ? "" : $" (app: {app})"));
+                errors.Add($"{label}: {other} と同じ指の組み合わせ・方向が重複しています" + (app is null ? "" : $" (app: {app})") + (mods is null ? "" : $" (modifiers: {KeyModifierNames.Format(mods.Value)})"));
                 continue;
             }
             seen[seenKey] = label;
@@ -311,7 +328,7 @@ public static class GestureConfig
                 spec = swipe;
             }
 
-            result.Add(new GestureBinding(spec, action!, app));
+            result.Add(new GestureBinding(spec, action!, app, mods));
         }
 
         if (errors.Count > 0) throw new GestureConfigException(errors);
@@ -454,6 +471,8 @@ public sealed class BindingEntry
 {
     public string? Name { get; set; }
     public string? App { get; set; }
+    /// <summary>"Ctrl" / "Ctrl+Shift" など。その修飾キーが、ちょうど押されているときだけ有効。"none" = どれも押していない。省略 = 問わない。</summary>
+    public string? Modifiers { get; set; }
     /// <summary>false なら、この割り当ては無効 (内容の検証だけして、判定には使わない)。省略 = 有効。</summary>
     public bool? Enabled { get; set; }
     public int? Fingers { get; set; }
@@ -480,7 +499,7 @@ public sealed class BindingEntry
 
     public BindingEntry Clone() => new()
     {
-        Name = Name, App = App, Enabled = Enabled, Fingers = Fingers, Slot = Slot, Direction = Direction,
+        Name = Name, App = App, Modifiers = Modifiers, Enabled = Enabled, Fingers = Fingers, Slot = Slot, Direction = Direction,
         Motions = Motions is null ? null : new List<string?>(Motions),
         Pinch = Pinch, PinchDistance = PinchDistance, CentroidTolerance = CentroidTolerance,
         LandOrder = LandOrder is null ? null : new List<int>(LandOrder), LandMinGapMs = LandMinGapMs, LandMaxGapMs = LandMaxGapMs, LandMaxMove = LandMaxMove,
