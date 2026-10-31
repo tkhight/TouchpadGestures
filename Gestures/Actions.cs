@@ -97,13 +97,20 @@ public static class KeyNames
 }
 
 /// <summary>ジェスチャー定義と動作の対応。</summary>
-public sealed record GestureBinding(SlotSwipeSpec Spec, IGestureAction Action);
+public sealed record GestureBinding(IGestureSpec Spec, IGestureAction Action)
+{
+    /// <summary>スワイプの定義のとき。それ以外は null。</summary>
+    public SlotSwipeSpec? Swipe => Spec as SlotSwipeSpec;
+
+    /// <summary>タップの定義のとき。それ以外は null。</summary>
+    public TapSpec? Tap => Spec as TapSpec;
+}
 
 /// <summary>判定結果に応じて、対応する動作を実行する。</summary>
 public sealed class GestureDispatcher
 {
     readonly GestureEngine _engine;
-    readonly Dictionary<SlotSwipeSpec, IGestureAction> _actions = new();
+    readonly Dictionary<IGestureSpec, IGestureAction> _actions = new();
     readonly IInputSender _sender;
 
     /// <exception cref="ArgumentException">同じ定義に複数の動作を割り当てたとき。</exception>
@@ -119,7 +126,7 @@ public sealed class GestureDispatcher
     /// フレームを与え、発火した定義を返す。execute が true のときは、その動作も実行する。
     /// execute が false でも判定は進む(画面表示や、しきい値の調整のため)。送信だけが行われない。
     /// </summary>
-    public IReadOnlyList<SlotSwipeSpec> Feed(Frame frame, bool execute = true)
+    public IReadOnlyList<IGestureSpec> Feed(Frame frame, bool execute = true)
     {
         var fired = _engine.Feed(frame);
         if (execute)

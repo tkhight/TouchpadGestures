@@ -24,6 +24,11 @@ public static class GestureConfig
           // slot は左から数えた番号 (0 始まり)。direction は Left / Right / Up / Down
           // minDistance / fixedTolerance / settleMs / repeatDistance は省略可 (パッド幅 = 1.0 の値)
           // repeatDistance を付けると、スワイプし続ける間 その距離ごとに連続で発火する
+          // 複数の指を動かすときは slot / direction の代わりに motions を使う (左から順、none = 固定)
+          //   例: { "fingers": 3, "motions": ["none", "Down", "Down"], ... } / ["Up", "Up", "Up"]
+          // タップは tapSlot (左から数えた番号) と tapCount (回数、省略で 1)。他の指は触れたまま、その指だけが
+          //   触れて離れるのを数える。maxTapMs / maxGapMs / maxTapMove は省略可
+          //   例: { "fingers": 3, "tapSlot": 0, "tapCount": 2, "action": { ... } }
           "bindings": [
             { "name": "3本指・左だけ←", "fingers": 3, "slot": 0, "direction": "Left",
               "action": { "hotkey": "Alt+Left" } },
@@ -61,6 +66,12 @@ public static class GestureConfig
         public int? Fingers { get; set; }
         public int? Slot { get; set; }
         public string? Direction { get; set; }
+        public List<string?>? Motions { get; set; }
+        public int? TapSlot { get; set; }
+        public int? TapCount { get; set; }
+        public long? MaxTapMs { get; set; }
+        public long? MaxGapMs { get; set; }
+        public double? MaxTapMove { get; set; }
         public double? MinDistance { get; set; }
         public double? FixedTolerance { get; set; }
         public long? SettleMs { get; set; }
@@ -97,7 +108,7 @@ public static class GestureConfig
 
         var errors = new List<string>();
         var result = new List<GestureBinding>();
-        var seen = new Dictionary<(int, int, SwipeDirection), string>();
+        var seen = new Dictionary<string, string>();
 
         for (int i = 0; i < file.Bindings.Count; i++)
         {
@@ -106,12 +117,41 @@ public static class GestureConfig
             int before = errors.Count;
 
             if (b.Fingers is null || b.Fingers < 1) errors.Add($"{label}: fingers は 1 以上の整数で指定してください");
-            if (b.Slot is null) errors.Add($"{label}: slot が必要です");
-            else if (b.Fingers >= 1 && (b.Slot < 0 || b.Slot >= b.Fingers))
-                errors.Add($"{label}: slot は 0 〜 {b.Fingers - 1} の範囲で指定してください (指定値: {b.Slot})");
+            SwipeDirection dir = default;
+            SwipeDirection?[]? motions = null;
+            bool isTap = b.TapSlot is not null || b.TapCount is not null;
+            if (isTap)
+            {
+                if (b.TapSlot is null) errors.Add($"{label}: tapSlot が必要です");
+                else if (b.Fingers >= 1 && (b.TapSlot < 0 || b.TapSlot >= b.Fingers))
+                    errors.Add($"{label}: tapSlot は 0 〜 {b.Fingers - 1} の範囲で指定してください (指定値: {b.TapSlot})");
+                if (b.TapCount < 1) errors.Add($"{label}: tapCount は 1 以上にしてください");
+                if (b.Slot is not null || b.Direction is not null || b.Motions is not null || b.MinDistance is not null
+                    || b.SettleMs is not null || b.RepeatDistance is not null)
+                    errors.Add($"{label}: タップには slot / direction / motions / minDistance / settleMs / repeatDistance は使えません");
+                if (b.MaxTapMs <= 0) errors.Add($"{label}: maxTapMs は 0 より大きい値にしてください");
+                if (b.MaxGapMs <= 0) errors.Add($"{label}: maxGapMs は 0 より大きい値にしてください");
+                if (b.MaxTapMove <= 0) errors.Add($"{label}: maxTapMove は 0 より大きい値にしてください");
+            }
+            else if (b.MaxTapMs is not null || b.MaxGapMs is not null || b.MaxTapMove is not null)
+            {
+                errors.Add($"{label}: maxTapMs / maxGapMs / maxTapMove は tapSlot と一緒にだけ指定できます");
+            }
+            else if (b.Motions is not null)
+            {
+                if (b.Slot is not null || b.Direction is not null)
+                    errors.Add($"{label}: motions と slot / direction は一緒に指定できません");
+                motions = ParseMotions(b.Motions, b.Fingers, label, errors);
+            }
+            else
+            {
+                if (b.Slot is null) errors.Add($"{label}: slot が必要です (指ごとに指定するなら motions)");
+                else if (b.Fingers >= 1 && (b.Slot < 0 || b.Slot >= b.Fingers))
+                    errors.Add($"{label}: slot は 0 〜 {b.Fingers - 1} の範囲で指定してください (指定値: {b.Slot})");
 
-            if (!TryParseDirection(b.Direction, out var dir))
-                errors.Add($"{label}: direction は Left / Right / Up / Down のどれかです (指定値: {b.Direction ?? "なし"})");
+                if (!TryParseDirection(b.Direction, out dir))
+                    errors.Add($"{label}: direction は Left / Right / Up / Down のどれかです (指定値: {b.Direction ?? "なし"})");
+            }
 
             if (b.MinDistance <= 0) errors.Add($"{label}: minDistance は 0 より大きい値にしてください");
             if (b.FixedTolerance < 0) errors.Add($"{label}: fixedTolerance は 0 以上にしてください");
@@ -122,21 +162,48 @@ public static class GestureConfig
 
             if (errors.Count != before) continue;
 
-            int fingers = b.Fingers!.Value, slot = b.Slot!.Value;
-            if (seen.TryGetValue((fingers, slot, dir), out var other))
+            int fingers = b.Fingers!.Value;
+            IGestureSpec spec;
+            if (isTap)
+            {
+                int ts = b.TapSlot!.Value, tc = b.TapCount ?? 1;
+                var tap = new TapSpec(
+                    string.IsNullOrEmpty(b.Name) ? DefaultTapName(fingers, ts, tc) : b.Name, fingers, ts, tc);
+                if (b.MaxTapMs is long mt) tap = tap with { MaxTapMs = mt };
+                if (b.MaxGapMs is long mg) tap = tap with { MaxGapMs = mg };
+                if (b.MaxTapMove is double mm) tap = tap with { MaxTapMove = mm };
+                if (b.FixedTolerance is double ftt) tap = tap with { FixedTolerance = ftt };
+                spec = tap;
+            }
+            else if (motions is null)
+            {
+                int slot = b.Slot!.Value;
+                spec = new SlotSwipeSpec(
+                    string.IsNullOrEmpty(b.Name) ? DefaultName(fingers, slot, dir) : b.Name,
+                    fingers, slot, dir);
+            }
+            else
+            {
+                int first = Array.FindIndex(motions, m => m is not null);
+                spec = new SlotSwipeSpec(
+                    string.IsNullOrEmpty(b.Name) ? DefaultName(motions) : b.Name,
+                    fingers, first, motions[first]!.Value, Motions: motions);
+            }
+            if (seen.TryGetValue(spec.Key, out var other))
             {
                 errors.Add($"{label}: {other} と同じ指の組み合わせ・方向が重複しています");
                 continue;
             }
-            seen[(fingers, slot, dir)] = label;
+            seen[spec.Key] = label;
 
-            var spec = new SlotSwipeSpec(
-                string.IsNullOrEmpty(b.Name) ? DefaultName(fingers, slot, dir) : b.Name,
-                fingers, slot, dir);
-            if (b.MinDistance is double md) spec = spec with { MinDistance = md };
-            if (b.FixedTolerance is double ft) spec = spec with { FixedTolerance = ft };
-            if (b.SettleMs is long sm) spec = spec with { SettleMs = sm };
-            if (b.RepeatDistance is double rd) spec = spec with { RepeatDistance = rd };
+            if (spec is SlotSwipeSpec swipe)
+            {
+                if (b.MinDistance is double md) swipe = swipe with { MinDistance = md };
+                if (b.FixedTolerance is double ft) swipe = swipe with { FixedTolerance = ft };
+                if (b.SettleMs is long sm) swipe = swipe with { SettleMs = sm };
+                if (b.RepeatDistance is double rd) swipe = swipe with { RepeatDistance = rd };
+                spec = swipe;
+            }
 
             result.Add(new GestureBinding(spec, action!));
         }
@@ -184,15 +251,49 @@ public static class GestureConfig
         }
     }
 
-    static string DefaultName(int fingers, int slot, SwipeDirection dir)
+    /// <summary>motions の各要素 (左から順)。"none" = 固定、Left / Right / Up / Down = その方向へ動く。</summary>
+    static SwipeDirection?[]? ParseMotions(List<string?> list, int? fingers, string label, List<string> errors)
     {
-        string arrow = dir switch
+        if (fingers is >= 1 && list.Count != fingers)
         {
-            SwipeDirection.Left => "←",
-            SwipeDirection.Right => "→",
-            SwipeDirection.Up => "↑",
-            _ => "↓",
-        };
-        return $"{fingers}本指・左から{slot + 1}番目だけ{arrow}";
+            errors.Add($"{label}: motions は fingers と同じ {fingers} 個で指定してください (指定数: {list.Count})");
+            return null;
+        }
+        var result = new SwipeDirection?[list.Count];
+        bool ok = true;
+        for (int i = 0; i < list.Count; i++)
+        {
+            string? s = list[i]?.Trim().ToLowerInvariant();
+            if (s is "none" or "fixed") continue;
+            if (TryParseDirection(s, out var d)) result[i] = d;
+            else
+            {
+                errors.Add($"{label}: motions[{i}] は none / Left / Right / Up / Down のどれかです (指定値: {list[i] ?? "null"})");
+                ok = false;
+            }
+        }
+        if (ok && result.All(m => m is null))
+        {
+            errors.Add($"{label}: motions に動かす指が 1 本もありません");
+            return null;
+        }
+        return ok ? result : null;
     }
+
+    static string Arrow(SwipeDirection dir) => dir switch
+    {
+        SwipeDirection.Left => "←",
+        SwipeDirection.Right => "→",
+        SwipeDirection.Up => "↑",
+        _ => "↓",
+    };
+
+    static string DefaultName(int fingers, int slot, SwipeDirection dir)
+        => $"{fingers}本指・左から{slot + 1}番目だけ{Arrow(dir)}";
+
+    static string DefaultTapName(int fingers, int slot, int count)
+        => $"{fingers}本指・左から{slot + 1}番目を{(count == 1 ? "" : count + "回")}タップ";
+
+    static string DefaultName(SwipeDirection?[] motions)
+        => $"{motions.Length}本指・" + string.Join("", motions.Select(m => m is SwipeDirection d ? Arrow(d) : "・"));
 }

@@ -487,9 +487,9 @@ namespace TouchpadViewer
         }
 
         // 連続発火の回数を数えるためのキー (「本数・動かす指・方向」。名前は設定で変えられるため使わない)
-        static string SpecKey(Gestures.SlotSwipeSpec s)
+        static string SpecKey(Gestures.IGestureSpec s)
         {
-            return s.FingerCount + "|" + s.MovingSlot + "|" + s.Direction;
+            return s.Key;
         }
 
         void AddLog(string line)
@@ -512,7 +512,7 @@ namespace TouchpadViewer
             // 判定は、設定ファイルの割り当て (しきい値もそのまま) で常に行う。画面の表示もこの結果。
             // チェックが入っていないときは、SendInput による実行だけを行わない
             bool execute = chkExec.Checked;
-            IReadOnlyList<Gestures.SlotSwipeSpec> fired;
+            IReadOnlyList<Gestures.IGestureSpec> fired;
             try
             {
                 fired = dispatcher.Feed(frame, execute);
@@ -524,7 +524,7 @@ namespace TouchpadViewer
             }
 
             // 連続発火のときは、同じ定義が発火回数ぶん並ぶ
-            foreach (Gestures.SlotSwipeSpec s in fired)
+            foreach (Gestures.IGestureSpec s in fired)
             {
                 string key = SpecKey(s);
                 int total;

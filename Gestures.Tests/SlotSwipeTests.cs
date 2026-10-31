@@ -5,8 +5,10 @@ namespace Gestures.Tests;
 
 public class SlotSwipeTests
 {
-    // 3本指・左(スロット0)だけ右へスワイプ
-    static readonly SlotSwipeSpec LeftRight = new("left-right", 3, 0, SwipeDirection.Right);
+    // 3本指・左(スロット0)だけ右へスワイプ。以下のテストの座標は、この値を前提にしている
+    // (既定値とは別に明示する。既定値は DefaultThresholds_AreTheTunedValues で確認)
+    static readonly SlotSwipeSpec LeftRight =
+        new("left-right", 3, 0, SwipeDirection.Right, MinDistance: 0.10, SettleMs: 40);
 
     static Frame F(long t, params (int id, double x, double y)[] cs)
         => new(t, cs.Select(c => new Contact(c.id, c.x, c.y)).ToList());
@@ -30,19 +32,20 @@ public class SlotSwipeTests
     public void DefaultThresholds_AreTheTunedValues()
     {
         var spec = new SlotSwipeSpec("x", 3, 0, SwipeDirection.Right);
-        Assert.Equal(0.10, spec.MinDistance);     // 実機の記録で 0.15 は厳しすぎたため 0.10 に下げた
+        Assert.Equal(0.06, spec.MinDistance);     // 実機で試して 0.06 / settleMs 0 が扱いやすかった
         Assert.Equal(0.03, spec.FixedTolerance);
-        Assert.Equal(40, spec.SettleMs);
+        Assert.Equal(0, spec.SettleMs);
         Assert.Null(spec.RepeatDistance);
     }
 
     [Fact]
     public void SwipeJustOverTheDefaultMinDistance_Fires_AndJustUnderDoesNot()
     {
-        var over = Landing().Concat(new[] { F(150, (1, 0.31, 0.5), (2, 0.4, 0.5), (3, 0.7, 0.5)) });   // 0.11 進む
-        var under = Landing().Concat(new[] { F(150, (1, 0.29, 0.5), (2, 0.4, 0.5), (3, 0.7, 0.5)) });  // 0.09 進む
-        Assert.Equal(1, Run(LeftRight, over));
-        Assert.Equal(0, Run(LeftRight, under));
+        var spec = new SlotSwipeSpec("x", 3, 0, SwipeDirection.Right);
+        var over = Landing().Concat(new[] { F(150, (1, 0.27, 0.5), (2, 0.4, 0.5), (3, 0.7, 0.5)) });   // 0.07 進む
+        var under = Landing().Concat(new[] { F(150, (1, 0.25, 0.5), (2, 0.4, 0.5), (3, 0.7, 0.5)) });  // 0.05 進む
+        Assert.Equal(1, Run(spec, over));
+        Assert.Equal(0, Run(spec, under));
     }
 
     [Fact]

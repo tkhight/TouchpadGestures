@@ -183,7 +183,7 @@ public class RepeatTests
             { "bindings": [ { "fingers": 3, "slot": 2, "direction": "Up", "repeatDistance": 0.04,
               "action": { "hotkey": "VolumeUp" } } ] }
             """);
-        Assert.Equal(0.04, b[0].Spec.RepeatDistance);
+        Assert.Equal(0.04, b[0].Swipe!.RepeatDistance);
     }
 
     [Fact]
@@ -193,7 +193,7 @@ public class RepeatTests
             { "bindings": [ { "fingers": 3, "slot": 2, "direction": "Up",
               "action": { "hotkey": "VolumeUp" } } ] }
             """);
-        Assert.Null(b[0].Spec.RepeatDistance);
+        Assert.Null(b[0].Swipe!.RepeatDistance);
     }
 
     [Theory]
@@ -212,7 +212,7 @@ public class RepeatTests
     public void Sample_UsesRepeatForVolumeAndScroll()
     {
         var b = GestureConfig.Parse(GestureConfig.SampleJson);
-        Assert.Equal(4, b.Count(x => x.Spec.RepeatDistance is not null));
-        Assert.Null(b.First(x => x.Spec.Name == "3本指・左だけ←").Spec.RepeatDistance);
+        Assert.Equal(4, b.Count(x => x.Swipe!.RepeatDistance is not null));
+        Assert.Null(b.First(x => x.Swipe!.Name == "3本指・左だけ←").Swipe!.RepeatDistance);
     }
 }

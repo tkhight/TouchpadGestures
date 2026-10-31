@@ -21,7 +21,7 @@ public class ConfigTests
     {
         var b = GestureConfig.Parse(GestureConfig.SampleJson);
         Assert.Equal(6, b.Count);
-        Assert.Equal("3本指・左だけ←", b[0].Spec.Name);
+        Assert.Equal("3本指・左だけ←", b[0].Swipe!.Name);
     }
 
     [Fact]
@@ -51,9 +51,9 @@ public class ConfigTests
               "minDistance": 0.3, "fixedTolerance": 0.05, "settleMs": 80,
               "action": { "hotkey": "F5" } } ] }
             """);
-        Assert.Equal(0.3, b[0].Spec.MinDistance);
-        Assert.Equal(0.05, b[0].Spec.FixedTolerance);
-        Assert.Equal(80, b[0].Spec.SettleMs);
+        Assert.Equal(0.3, b[0].Swipe!.MinDistance);
+        Assert.Equal(0.05, b[0].Swipe!.FixedTolerance);
+        Assert.Equal(80, b[0].Swipe!.SettleMs);
     }
 
     [Fact]
