@@ -73,12 +73,25 @@ public static class BindingEditing
         if (!string.IsNullOrWhiteSpace(e.Name)) return e.Name!;
         try
         {
-            return GestureConfig.Build(new[] { e })[0].Spec.Name;
+            var probe = e.Clone();
+            probe.Enabled = null; // 無効でも名前は作る
+            return GestureConfig.Build(new[] { probe })[0].Spec.Name;
         }
         catch (GestureConfigException)
         {
             return "(未完成)";
         }
+    }
+
+    /// <summary>
+    /// item を、neighbor が今いる位置へ動かす (neighbor は 1 つ上/下に見えている行)。間にある、絞り込みで隠れている行の順番は変えない。
+    /// </summary>
+    public static void MoveTo(List<BindingEntry> all, BindingEntry item, BindingEntry neighbor)
+    {
+        int from = all.IndexOf(item), to = all.IndexOf(neighbor);
+        if (from < 0 || to < 0 || from == to) return;
+        all.RemoveAt(from);
+        all.Insert(to, item);
     }
 
     /// <summary>一覧に出す、動作の説明。</summary>

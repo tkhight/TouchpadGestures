@@ -32,6 +32,7 @@ public static class GestureConfig
           // タップは tapSlot (左から数えた番号) と tapCount (回数、省略で 1)。他の指は触れたまま、その指だけが
           //   触れて離れるのを数える。maxTapMs / maxGapMs / maxTapMove は省略可
           //   例: { "fingers": 3, "tapSlot": 0, "tapCount": 2, "action": { ... } }
+          // "enabled": false を付けると、その割り当てだけを一時的に無効にできる (省略 = 有効)
           // app を付けると、そのアプリ (プロセス名。"chrome" / "Code.exe" など) が前面のときだけ有効になる。
           //   同じジェスチャーが app なしにもあるときは、app 付きが優先される。プロセス名は画面のログに [ ] で出る
           //   例: { "app": "chrome", "fingers": 3, "slot": 0, "direction": "Left", "action": { ... } }
@@ -246,6 +247,9 @@ public static class GestureConfig
                     string.IsNullOrEmpty(b.Name) ? DefaultName(motions) : b.Name,
                     fingers, first, motions[first]!.Value, Motions: motions);
             }
+            // 無効な割り当ては、内容だけ確かめて、重複の判定にも結果にも入れない (同じジェスチャーの別の動作と切り替えて使える)
+            if (b.Enabled == false) continue;
+
             string seenKey = (app ?? "") + "|" + spec.Key;
             if (seen.TryGetValue(seenKey, out var other))
             {
@@ -364,6 +368,8 @@ public sealed class BindingEntry
 {
     public string? Name { get; set; }
     public string? App { get; set; }
+    /// <summary>false なら、この割り当ては無効 (内容の検証だけして、判定には使わない)。省略 = 有効。</summary>
+    public bool? Enabled { get; set; }
     public int? Fingers { get; set; }
     public int? Slot { get; set; }
     public string? Direction { get; set; }
@@ -384,7 +390,7 @@ public sealed class BindingEntry
 
     public BindingEntry Clone() => new()
     {
-        Name = Name, App = App, Fingers = Fingers, Slot = Slot, Direction = Direction,
+        Name = Name, App = App, Enabled = Enabled, Fingers = Fingers, Slot = Slot, Direction = Direction,
         Motions = Motions is null ? null : new List<string?>(Motions),
         Pinch = Pinch, PinchDistance = PinchDistance, CentroidTolerance = CentroidTolerance,
         TapSlot = TapSlot, TapCount = TapCount, MaxTapMs = MaxTapMs, MaxGapMs = MaxGapMs, MaxTapMove = MaxTapMove,

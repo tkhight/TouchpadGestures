@@ -212,4 +212,39 @@ public class EditingTests
             Assert.Equal(vk, KeyNames.Parse(name));
         }
     }
+
+    // ---- 並べ替え ----
+
+    static List<BindingEntry> Named(params string[] names) => names.Select(n => new BindingEntry { Name = n }).ToList();
+    static string Order(List<BindingEntry> l) => string.Concat(l.Select(e => e.Name));
+
+    [Fact]
+    public void MoveTo_Up_AndDown()
+    {
+        var l = Named("A", "B", "C", "D");
+        BindingEditing.MoveTo(l, l[2], l[1]);   // C を B の位置へ (上へ)
+        Assert.Equal("ACBD", Order(l));
+        BindingEditing.MoveTo(l, l[1], l[2]);   // C を B の位置へ (下へ)
+        Assert.Equal("ABCD", Order(l));
+    }
+
+    [Fact]
+    public void MoveTo_PassesOverHiddenItems_WithoutReorderingThem()
+    {
+        // 絞り込みで B, C が隠れていて、A の次に見える行が D のとき
+        var l = Named("A", "B", "C", "D");
+        BindingEditing.MoveTo(l, l[0], l[3]);   // A を D の位置へ
+        Assert.Equal("BCDA", Order(l));
+        BindingEditing.MoveTo(l, l[3], l[0]);   // A を先頭の B の位置へ
+        Assert.Equal("ABCD", Order(l));
+    }
+
+    [Fact]
+    public void MoveTo_IgnoresUnknownOrSameItems()
+    {
+        var l = Named("A", "B");
+        BindingEditing.MoveTo(l, l[0], l[0]);
+        BindingEditing.MoveTo(l, l[0], new BindingEntry { Name = "X" });
+        Assert.Equal("AB", Order(l));
+    }
 }

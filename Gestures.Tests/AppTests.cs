@@ -190,4 +190,65 @@ public class AppTests
             """);
         Assert.All(b, x => Assert.Equal("chrome", x.App));
     }
+
+    // ---- 無効 (enabled: false) ----
+
+    [Fact]
+    public void Disabled_IsNotBuilt()
+    {
+        var b = GestureConfig.Parse("""
+            { "bindings": [
+              { "fingers": 3, "slot": 0, "direction": "Left", "enabled": false, "action": { "hotkey": "A" } },
+              { "fingers": 3, "slot": 1, "direction": "Left", "enabled": true, "action": { "hotkey": "B" } },
+              { "fingers": 3, "slot": 2, "direction": "Left", "action": { "hotkey": "C" } } ] }
+            """);
+        Assert.Equal(new[] { "B", "C" }, b.Select(x => x.Action.Description));
+    }
+
+    [Fact]
+    public void Disabled_DoesNotConflictWithTheSameGesture()
+    {
+        var b = GestureConfig.Parse("""
+            { "bindings": [
+              { "fingers": 3, "slot": 0, "direction": "Left", "enabled": false, "action": { "hotkey": "A" } },
+              { "fingers": 3, "slot": 0, "direction": "Left", "action": { "hotkey": "B" } } ] }
+            """);
+        Assert.Equal("B", Assert.Single(b).Action.Description);
+    }
+
+    [Fact]
+    public void Disabled_AppBinding_DoesNotOverrideTheGlobalOne()
+    {
+        var b = GestureConfig.Parse("""
+            { "bindings": [
+              { "fingers": 3, "slot": 0, "direction": "Right", "minDistance": 0.10, "settleMs": 0, "action": { "hotkey": "A" } },
+              { "app": "chrome", "enabled": false, "fingers": 3, "slot": 0, "direction": "Right", "minDistance": 0.10, "settleMs": 0,
+                "action": { "hotkey": "B" } } ] }
+            """);
+        var f = new Fake();
+        Swipe(new GestureDispatcher(b, f, () => "chrome"));
+        Assert.Equal(new[] { "down:41", "up:41" }, f.Log);
+    }
+
+    [Fact]
+    public void Disabled_StillReportsContentErrors()
+    {
+        var ex = Assert.Throws<GestureConfigException>(() => GestureConfig.Parse("""
+            { "bindings": [ { "fingers": 3, "slot": 0, "direction": "Left", "enabled": false, "action": { "hotkey": "Nope" } } ] }
+            """));
+        Assert.Contains("Nope", ex.Errors.Single());
+    }
+
+    [Fact]
+    public void Enabled_RoundTripsThroughJson_AndDisplayNameWorksWhenDisabled()
+    {
+        var entries = GestureConfig.ParseEntries("""
+            { "bindings": [ { "fingers": 3, "slot": 0, "direction": "Left", "enabled": false, "action": { "hotkey": "A" } } ] }
+            """);
+        var json = GestureConfig.ToJson(entries);
+        Assert.Contains("\"enabled\":false", json);
+        Assert.Equal(false, GestureConfig.ParseEntries(json)[0].Enabled);
+        Assert.Equal("3本指・左から1番目だけ←", BindingEditing.DisplayName(entries[0]));
+        Assert.Equal(false, entries[0].Clone().Enabled);
+    }
 }

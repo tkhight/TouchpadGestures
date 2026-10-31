@@ -48,6 +48,7 @@ namespace TouchpadViewer
         readonly TextBox txtName = new TextBox();
         readonly ComboBox cboApp = new ComboBox();
         readonly NumericUpDown numFingers = new NumericUpDown();
+        readonly CheckBox chkEnabled = new CheckBox();
         readonly RadioButton rbSwipe = new RadioButton();
         readonly RadioButton rbTap = new RadioButton();
         readonly RadioButton rbPinch = new RadioButton();
@@ -122,7 +123,11 @@ namespace TouchpadViewer
             copy.Click += delegate { AddEntry(true); };
             Button del = new Button { Text = "削除", Width = 80 };
             del.Click += delegate { DeleteEntry(); };
-            buttons.Controls.AddRange(new Control[] { add, copy, del });
+            Button up = new Button { Text = "↑", Width = 40 };
+            up.Click += delegate { MoveEntry(-1); };
+            Button down = new Button { Text = "↓", Width = 40 };
+            down.Click += delegate { MoveEntry(1); };
+            buttons.Controls.AddRange(new Control[] { add, copy, del, up, down });
 
             left.Controls.Add(list);
             left.Controls.Add(buttons);
@@ -167,6 +172,11 @@ namespace TouchpadViewer
             numFingers.Maximum = 10;
             numFingers.Value = 3;
             basic.Controls.Add(numFingers);
+            chkEnabled.Text = "有効 (オフにすると、この割り当てだけ一時的に無効)";
+            chkEnabled.AutoSize = true;
+            chkEnabled.Checked = true;
+            chkEnabled.Location = new Point(170, 70);
+            basic.Controls.Add(chkEnabled);
 
             basic.Controls.Add(new Label { Text = "種類", AutoSize = true, Location = new Point(0, 102) });
             rbSwipe.Text = "スワイプ"; rbSwipe.AutoSize = true; rbSwipe.Location = new Point(90, 100);
@@ -258,6 +268,7 @@ namespace TouchpadViewer
             cboApp.TextChanged += changed;
             cboApp.Leave += delegate { if (!loading) { RefillFilter(SelectedFilter()); RefillList(cur); } };
             cboApp.DropDown += delegate { RefillAppChoices(); };
+            chkEnabled.CheckedChanged += changed;
             numFingers.ValueChanged += delegate { if (!loading && cur != null) { RebuildFingerControls(); Apply(); } };
             rbSwipe.CheckedChanged += delegate { OnKindChanged(); };
             rbTap.CheckedChanged += delegate { OnKindChanged(); };
@@ -401,7 +412,9 @@ namespace TouchpadViewer
         static void SetRow(ListViewItem item, BindingEntry e)
         {
             item.SubItems[0].Text = AppOf(e) ?? GlobalOnly;
-            item.SubItems[1].Text = BindingEditing.DisplayName(e);
+            bool off = e.Enabled == false;
+            item.SubItems[1].Text = (off ? "(無効) " : "") + BindingEditing.DisplayName(e);
+            item.ForeColor = off ? SystemColors.GrayText : SystemColors.WindowText;
             item.SubItems[2].Text = BindingEditing.DescribeAction(e);
         }
 
@@ -448,6 +461,17 @@ namespace TouchpadViewer
             if (!MatchesFilter(e)) RefillFilter(AllApps);
             RefillList(e);
             txtName.Focus();
+        }
+
+        // 表示されている行のあいだで、選んだ行を 1 つ上/下へ動かす
+        void MoveEntry(int delta)
+        {
+            if (cur == null || list.SelectedItems.Count == 0) return;
+            int i = list.SelectedItems[0].Index + delta;
+            if (i < 0 || i >= list.Items.Count) return;
+            BindingEditing.MoveTo(entries, cur, (BindingEntry)list.Items[i].Tag);
+            RefillList(cur);
+            list.Focus();
         }
 
         void DeleteEntry()
@@ -520,6 +544,7 @@ namespace TouchpadViewer
             BindingEntry e = cur;
             txtName.Text = e.Name ?? "";
             cboApp.Text = e.App ?? "";
+            chkEnabled.Checked = e.Enabled != false;
             numFingers.Value = Math.Min(Math.Max(e.Fingers ?? 3, (int)numFingers.Minimum), (int)numFingers.Maximum);
 
             GestureKind kind = BindingEditing.KindOf(e);
@@ -571,6 +596,7 @@ namespace TouchpadViewer
 
             e.Name = NullIfEmpty(txtName.Text);
             e.App = NullIfEmpty(cboApp.Text);
+            e.Enabled = chkEnabled.Checked ? (bool?)null : false;
             e.Fingers = (int)numFingers.Value;
             BindingEditing.ClearGesture(e);
 
