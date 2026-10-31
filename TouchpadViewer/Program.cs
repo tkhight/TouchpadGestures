@@ -470,7 +470,7 @@ namespace TouchpadViewer
                     AddLog("設定ファイルの見本を作成しました");
                 }
                 IReadOnlyList<Gestures.GestureBinding> bindings = Gestures.GestureConfig.Load(path);
-                dispatcher = new Gestures.GestureDispatcher(bindings, sender);
+                dispatcher = new Gestures.GestureDispatcher(bindings, sender, Gestures.ForegroundApp.GetProcessName);
                 AddLog("設定を読み込みました: " + bindings.Count + "件");
                 ok = true;
             }
@@ -530,7 +530,9 @@ namespace TouchpadViewer
                 int total;
                 repeatTotals.TryGetValue(key, out total);
                 repeatTotals[key] = ++total;
-                if (total == 1) AddLog(s.Name + (execute ? "  ▶実行" : ""));
+                if (total == 1)
+                    AddLog(s.Name + (execute ? "  ▶実行" : "") +
+                        (dispatcher.LastApp == null ? "" : "  [" + dispatcher.LastApp + "]"));
                 flashText = total > 1 ? s.Name + " ×" + total : s.Name; // 連続発火は「× 回数」
                 flashUntilMs = clock.ElapsedMilliseconds + 1200;
             }
@@ -572,6 +574,12 @@ namespace TouchpadViewer
             chkExec.Dock = DockStyle.Fill;
             chkExec.Padding = new Padding(8, 0, 0, 0);
 
+            Button btnEdit = new Button();
+            btnEdit.Text = "ジェスチャーを編集…";
+            btnEdit.Dock = DockStyle.Right;
+            btnEdit.Width = 150;
+            btnEdit.Click += delegate { EditGestures(); };
+
             Button btnReload = new Button();
             btnReload.Text = "設定を再読み込み";
             btnReload.Dock = DockStyle.Right;
@@ -602,6 +610,7 @@ namespace TouchpadViewer
             chkSim.CheckedChanged += OnSimToggled;
             bar.Controls.Add(chkSim);
             bar.Controls.Add(btnReload);
+            bar.Controls.Add(btnEdit);
             bar.Controls.Add(btnOpen);
             bar.Controls.Add(btnChoose);
             Controls.Add(bar);
@@ -889,6 +898,9 @@ namespace TouchpadViewer
             miExec = new ToolStripMenuItem("ジェスチャーでキー操作を実行");
             miExec.Click += delegate { chkExec.Checked = !chkExec.Checked; };
 
+            ToolStripMenuItem miEdit = new ToolStripMenuItem("ジェスチャーを編集…");
+            miEdit.Click += delegate { ShowFromTray(); EditGestures(); };
+
             ToolStripMenuItem miReload = new ToolStripMenuItem("設定を再読み込み");
             miReload.Click += delegate { LoadBindings(); };
 
@@ -910,7 +922,7 @@ namespace TouchpadViewer
             ContextMenuStrip menu = new ContextMenuStrip();
             menu.Items.AddRange(new ToolStripItem[] {
                 miShow, new ToolStripSeparator(),
-                miExec, miReload, miOpen, miChoose, miResetPath, new ToolStripSeparator(),
+                miExec, miEdit, miReload, miOpen, miChoose, miResetPath, new ToolStripSeparator(),
                 miAuto, new ToolStripSeparator(),
                 miExit });
             menu.Opening += delegate { RefreshAutoStartItem(); };
@@ -1012,6 +1024,29 @@ namespace TouchpadViewer
             }
             ResolveConfigLocation();
             LoadBindings();
+        }
+
+        // 設定画面で割り当てを編集する。保存されたら読み直して反映する
+        void EditGestures()
+        {
+            if (!File.Exists(ConfigPath)) LoadBindings(); // 見本を作る
+            if (!File.Exists(ConfigPath)) return;
+            List<Gestures.BindingEntry> entries;
+            try
+            {
+                entries = Gestures.GestureConfig.LoadEntries(ConfigPath);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, ConfigPath + "\r\n\r\n" + ex.Message + "\r\n\r\n" +
+                    "設定ファイルの形式が不正なため、設定画面を開けません。「設定ファイルを開く」で直してください。",
+                    "設定画面を開けません", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return;
+            }
+            using (SettingsForm form = new SettingsForm(ConfigPath, entries))
+            {
+                if (form.ShowDialog(this) == DialogResult.OK) LoadBindings();
+            }
         }
 
         void OpenConfig()

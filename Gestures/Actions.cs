@@ -84,6 +84,16 @@ public static class KeyNames
         ["MediaNext"] = 0xB0, ["MediaPrev"] = 0xB1, ["MediaStop"] = 0xB2, ["MediaPlayPause"] = 0xB3,
     };
 
+    /// <summary>仮想キーコード → 代表のキー名 (Parse で同じコードに戻る名前)。知らないコードは null。</summary>
+    public static string? NameOf(ushort vk)
+    {
+        foreach (var (name, code) in Named) // 先に登録した名前が代表 (Ctrl, Esc, Backspace, Delete, Insert)
+            if (code == vk) return name;
+        if ((vk >= 'A' && vk <= 'Z') || (vk >= '0' && vk <= '9')) return ((char)vk).ToString();
+        if (vk >= 0x70 && vk <= 0x87) return "F" + (vk - 0x70 + 1);
+        return null;
+    }
+
     /// <exception cref="FormatException">未知のキー名のとき。</exception>
     public static ushort Parse(string name)
     {
@@ -99,8 +109,23 @@ public static class KeyNames
     }
 }
 
-/// <summary>ジェスチャー定義と動作の対応。</summary>
-public sealed record GestureBinding(IGestureSpec Spec, IGestureAction Action)
+/// <summary>アプリ名 (実行ファイル名) の比較用の正規化。大文字小文字と ".exe" の有無を無視する。</summary>
+public static class AppNames
+{
+    /// <summary>空なら null (どのアプリでも有効)。</summary>
+    public static string? Normalize(string? name)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return null;
+        var s = name.Trim().ToLowerInvariant();
+        return s.EndsWith(".exe") && s.Length > 4 ? s[..^4] : s;
+    }
+}
+
+/// <summary>
+/// ジェスチャー定義と動作の対応。App が null ならどのアプリでも有効。
+/// 値があれば、そのアプリ (プロセス名) が前面のときだけ有効で、同じジェスチャーの App なしの割り当てより優先される。
+/// </summary>
+public sealed record GestureBinding(IGestureSpec Spec, IGestureAction Action, string? App = null)
 {
     /// <summary>スワイプの定義のとき。それ以外は null。</summary>
     public SlotSwipeSpec? Swipe => Spec as SlotSwipeSpec;
@@ -115,28 +140,65 @@ public sealed record GestureBinding(IGestureSpec Spec, IGestureAction Action)
 /// <summary>判定結果に応じて、対応する動作を実行する。</summary>
 public sealed class GestureDispatcher
 {
-    readonly GestureEngine _engine;
-    readonly Dictionary<IGestureSpec, IGestureAction> _actions = new();
+    readonly List<(GestureBinding Binding, string? App, IGestureRecognizer Recognizer)> _entries;
     readonly IInputSender _sender;
+    readonly Func<string?>? _foregroundApp;
 
-    /// <exception cref="ArgumentException">同じ定義に複数の動作を割り当てたとき。</exception>
-    public GestureDispatcher(IEnumerable<GestureBinding> bindings, IInputSender sender)
+    /// <summary>最後に発火したときの前面アプリ名 (正規化済み)。取れなかった/発火が無いときは null。</summary>
+    public string? LastApp { get; private set; }
+
+    /// <param name="foregroundApp">前面アプリ名を返す。発火したときだけ呼ばれる。null なら App 付きの割り当ては働かない。</param>
+    /// <exception cref="ArgumentException">同じアプリ・同じ定義に複数の動作を割り当てたとき。</exception>
+    public GestureDispatcher(IEnumerable<GestureBinding> bindings, IInputSender sender, Func<string?>? foregroundApp = null)
     {
-        var list = bindings.ToList();
-        foreach (var b in list) _actions.Add(b.Spec, b.Action);
-        _engine = new GestureEngine(list.Select(b => b.Spec));
+        var seen = new HashSet<(string?, IGestureSpec)>();
+        _entries = new();
+        foreach (var b in bindings)
+        {
+            var app = AppNames.Normalize(b.App);
+            if (!seen.Add((app, b.Spec)))
+                throw new ArgumentException("同じ定義に複数の動作が割り当てられています: " + b.Spec.Name);
+            _entries.Add((b, app, GestureEngine.Create(b.Spec)));
+        }
         _sender = sender;
+        _foregroundApp = foregroundApp;
     }
 
     /// <summary>
     /// フレームを与え、発火した定義を返す。execute が true のときは、その動作も実行する。
     /// execute が false でも判定は進む(画面表示や、しきい値の調整のため)。送信だけが行われない。
+    /// 判定はアプリに関係なく常に進め、発火したときに前面アプリを見て、有効な割り当てだけを採用する。
     /// </summary>
     public IReadOnlyList<IGestureSpec> Feed(Frame frame, bool execute = true)
     {
-        var fired = _engine.Feed(frame);
+        var hits = new List<(GestureBinding Binding, string? App, int Count)>();
+        foreach (var (b, app, r) in _entries)
+            if (r.Feed(frame)) hits.Add((b, app, r.LastFireCount));
+
+        LastApp = null;
+        var fired = new List<IGestureSpec>();
+        if (hits.Count == 0) return fired;
+
+        var current = AppNames.Normalize(_foregroundApp?.Invoke());
+        LastApp = current;
+        var run = new List<(IGestureAction Action, int Count)>();
+        foreach (var (b, app, count) in hits)
+        {
+            if (!IsActive(b, app, current)) continue;
+            for (int i = 0; i < count; i++) fired.Add(b.Spec);
+            run.Add((b.Action, count));
+        }
         if (execute)
-            foreach (var spec in fired) _actions[spec].Execute(_sender);
+            foreach (var (action, count) in run)
+                for (int i = 0; i < count; i++) action.Execute(_sender);
         return fired;
+    }
+
+    bool IsActive(GestureBinding b, string? app, string? current)
+    {
+        if (app is not null) return app == current;
+        // App なしは、同じジェスチャーに現在のアプリ専用の割り当てがあれば、それに譲る
+        if (current is null) return true;
+        return !_entries.Any(e => e.App == current && e.Binding.Spec.Key == b.Spec.Key);
     }
 }

@@ -233,7 +233,7 @@ public sealed class GestureEngine
     public GestureEngine(IEnumerable<IGestureSpec> specs)
         => _recognizers = specs.Select(Create).ToList();
 
-    static IGestureRecognizer Create(IGestureSpec spec) => spec switch
+    internal static IGestureRecognizer Create(IGestureSpec spec) => spec switch
     {
         SlotSwipeSpec s => new SlotSwipeRecognizer(s),
         TapSpec t => new TapRecognizer(t),

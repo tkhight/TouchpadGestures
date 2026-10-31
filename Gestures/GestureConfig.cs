@@ -32,6 +32,9 @@ public static class GestureConfig
           // タップは tapSlot (左から数えた番号) と tapCount (回数、省略で 1)。他の指は触れたまま、その指だけが
           //   触れて離れるのを数える。maxTapMs / maxGapMs / maxTapMove は省略可
           //   例: { "fingers": 3, "tapSlot": 0, "tapCount": 2, "action": { ... } }
+          // app を付けると、そのアプリ (プロセス名。"chrome" / "Code.exe" など) が前面のときだけ有効になる。
+          //   同じジェスチャーが app なしにもあるときは、app 付きが優先される。プロセス名は画面のログに [ ] で出る
+          //   例: { "app": "chrome", "fingers": 3, "slot": 0, "direction": "Left", "action": { ... } }
           "bindings": [
             { "name": "3本指・左だけ←", "fingers": 3, "slot": 0, "direction": "Left",
               "action": { "hotkey": "Alt+Left" } },
@@ -60,36 +63,7 @@ public static class GestureConfig
 
     sealed class FileDto
     {
-        public List<BindingDto>? Bindings { get; set; }
-    }
-
-    sealed class BindingDto
-    {
-        public string? Name { get; set; }
-        public int? Fingers { get; set; }
-        public int? Slot { get; set; }
-        public string? Direction { get; set; }
-        public List<string?>? Motions { get; set; }
-        public string? Pinch { get; set; }
-        public double? PinchDistance { get; set; }
-        public double? CentroidTolerance { get; set; }
-        public int? TapSlot { get; set; }
-        public int? TapCount { get; set; }
-        public long? MaxTapMs { get; set; }
-        public long? MaxGapMs { get; set; }
-        public double? MaxTapMove { get; set; }
-        public double? MinDistance { get; set; }
-        public double? FixedTolerance { get; set; }
-        public long? SettleMs { get; set; }
-        public double? RepeatDistance { get; set; }
-        public ActionDto? Action { get; set; }
-    }
-
-    sealed class ActionDto
-    {
-        public string? Hotkey { get; set; }
-        public int? Wheel { get; set; }
-        public bool? Horizontal { get; set; }
+        public List<BindingEntry>? Bindings { get; set; }
     }
 
     /// <exception cref="GestureConfigException">形式・内容に問題があるとき。</exception>
@@ -97,7 +71,15 @@ public static class GestureConfig
         => Parse(File.ReadAllText(path, Encoding.UTF8));
 
     /// <exception cref="GestureConfigException">形式・内容に問題があるとき(問題点は全件まとめて返す)。</exception>
-    public static IReadOnlyList<GestureBinding> Parse(string json)
+    public static IReadOnlyList<GestureBinding> Parse(string json) => Build(ParseEntries(json));
+
+    /// <exception cref="GestureConfigException">形式・内容に問題があるとき。</exception>
+    public static List<BindingEntry> LoadEntries(string path)
+        => ParseEntries(File.ReadAllText(path, Encoding.UTF8));
+
+    /// <summary>JSON を、中身を検証せずに編集用の一覧にする。形式が不正なときだけ失敗する。</summary>
+    /// <exception cref="GestureConfigException">JSON の形式が不正、または "bindings" 配列が無いとき。</exception>
+    public static List<BindingEntry> ParseEntries(string json)
     {
         FileDto? file;
         try
@@ -111,18 +93,49 @@ public static class GestureConfig
 
         if (file?.Bindings is null)
             throw new GestureConfigException(new[] { "\"bindings\" 配列がありません" });
+        return file.Bindings;
+    }
 
+    static readonly JsonSerializerOptions WriteOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull,
+        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+    };
+
+    /// <summary>編集用の一覧を、設定ファイルの JSON にする。1 件を 1 行に書く。手書きのコメントは残らない。</summary>
+    public static string ToJson(IEnumerable<BindingEntry> entries)
+    {
+        var sb = new StringBuilder();
+        sb.Append("// このファイルは設定画面からも編集できます。設定画面で保存すると、手書きのコメントは消えます\n");
+        sb.Append("{\n  \"bindings\": [");
+        bool first = true;
+        foreach (var e in entries)
+        {
+            sb.Append(first ? "\n    " : ",\n    ");
+            sb.Append(JsonSerializer.Serialize(e, WriteOptions));
+            first = false;
+        }
+        sb.Append(first ? "]\n}\n" : "\n  ]\n}\n");
+        return sb.ToString();
+    }
+
+    /// <exception cref="GestureConfigException">内容に問題があるとき(問題点は全件まとめて返す)。</exception>
+    public static IReadOnlyList<GestureBinding> Build(IReadOnlyList<BindingEntry> entries)
+    {
         var errors = new List<string>();
         var result = new List<GestureBinding>();
         var seen = new Dictionary<string, string>();
 
-        for (int i = 0; i < file.Bindings.Count; i++)
+        for (int i = 0; i < entries.Count; i++)
         {
-            var b = file.Bindings[i];
+            var b = entries[i];
             string label = $"bindings[{i}]" + (string.IsNullOrEmpty(b.Name) ? "" : $" \"{b.Name}\"");
             int before = errors.Count;
 
             if (b.Fingers is null || b.Fingers < 1) errors.Add($"{label}: fingers は 1 以上の整数で指定してください");
+            string? app = AppNames.Normalize(b.App);
+            if (b.App is not null && app is null) errors.Add($"{label}: app が空です (全アプリで有効にするなら項目ごと省く)");
             SwipeDirection dir = default;
             SwipeDirection?[]? motions = null;
             bool isTap = b.TapSlot is not null || b.TapCount is not null;
@@ -233,12 +246,13 @@ public static class GestureConfig
                     string.IsNullOrEmpty(b.Name) ? DefaultName(motions) : b.Name,
                     fingers, first, motions[first]!.Value, Motions: motions);
             }
-            if (seen.TryGetValue(spec.Key, out var other))
+            string seenKey = (app ?? "") + "|" + spec.Key;
+            if (seen.TryGetValue(seenKey, out var other))
             {
-                errors.Add($"{label}: {other} と同じ指の組み合わせ・方向が重複しています");
+                errors.Add($"{label}: {other} と同じ指の組み合わせ・方向が重複しています" + (app is null ? "" : $" (app: {app})"));
                 continue;
             }
-            seen[spec.Key] = label;
+            seen[seenKey] = label;
 
             if (spec is SlotSwipeSpec swipe)
             {
@@ -249,14 +263,14 @@ public static class GestureConfig
                 spec = swipe;
             }
 
-            result.Add(new GestureBinding(spec, action!));
+            result.Add(new GestureBinding(spec, action!, app));
         }
 
         if (errors.Count > 0) throw new GestureConfigException(errors);
         return result;
     }
 
-    static IGestureAction? ParseAction(ActionDto? a, string label, List<string> errors)
+    static IGestureAction? ParseAction(ActionEntry? a, string label, List<string> errors)
     {
         if (a is null)
         {
@@ -283,7 +297,7 @@ public static class GestureConfig
         return new WheelAction(a.Wheel!.Value, a.Horizontal ?? false);
     }
 
-    static bool TryParseDirection(string? s, out SwipeDirection dir)
+    internal static bool TryParseDirection(string? s, out SwipeDirection dir)
     {
         switch (s?.Trim().ToLowerInvariant())
         {
@@ -340,4 +354,48 @@ public static class GestureConfig
 
     static string DefaultName(SwipeDirection?[] motions)
         => $"{motions.Length}本指・" + string.Join("", motions.Select(m => m is SwipeDirection d ? Arrow(d) : "・"));
+}
+
+/// <summary>
+/// 設定ファイルの 1 件分 (JSON の 1 つの割り当て) をそのまま持つ編集用の型。
+/// 項目の意味と省略時の既定は、見本 (GestureConfig.SampleJson) のコメントを参照。
+/// </summary>
+public sealed class BindingEntry
+{
+    public string? Name { get; set; }
+    public string? App { get; set; }
+    public int? Fingers { get; set; }
+    public int? Slot { get; set; }
+    public string? Direction { get; set; }
+    public List<string?>? Motions { get; set; }
+    public string? Pinch { get; set; }
+    public double? PinchDistance { get; set; }
+    public double? CentroidTolerance { get; set; }
+    public int? TapSlot { get; set; }
+    public int? TapCount { get; set; }
+    public long? MaxTapMs { get; set; }
+    public long? MaxGapMs { get; set; }
+    public double? MaxTapMove { get; set; }
+    public double? MinDistance { get; set; }
+    public double? FixedTolerance { get; set; }
+    public long? SettleMs { get; set; }
+    public double? RepeatDistance { get; set; }
+    public ActionEntry? Action { get; set; }
+
+    public BindingEntry Clone() => new()
+    {
+        Name = Name, App = App, Fingers = Fingers, Slot = Slot, Direction = Direction,
+        Motions = Motions is null ? null : new List<string?>(Motions),
+        Pinch = Pinch, PinchDistance = PinchDistance, CentroidTolerance = CentroidTolerance,
+        TapSlot = TapSlot, TapCount = TapCount, MaxTapMs = MaxTapMs, MaxGapMs = MaxGapMs, MaxTapMove = MaxTapMove,
+        MinDistance = MinDistance, FixedTolerance = FixedTolerance, SettleMs = SettleMs, RepeatDistance = RepeatDistance,
+        Action = Action is null ? null : new ActionEntry { Hotkey = Action.Hotkey, Wheel = Action.Wheel, Horizontal = Action.Horizontal },
+    };
+}
+
+public sealed class ActionEntry
+{
+    public string? Hotkey { get; set; }
+    public int? Wheel { get; set; }
+    public bool? Horizontal { get; set; }
 }
