@@ -237,6 +237,7 @@ public sealed class GestureEngine
     {
         SlotSwipeSpec s => new SlotSwipeRecognizer(s),
         TapSpec t => new TapRecognizer(t),
+        PinchSpec p => new PinchRecognizer(p),
         _ => throw new ArgumentException("Unknown gesture spec: " + spec.GetType().Name, nameof(spec)),
     };
 

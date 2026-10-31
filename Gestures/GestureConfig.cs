@@ -26,6 +26,9 @@ public static class GestureConfig
           // repeatDistance を付けると、スワイプし続ける間 その距離ごとに連続で発火する
           // 複数の指を動かすときは slot / direction の代わりに motions を使う (左から順、none = 固定)
           //   例: { "fingers": 3, "motions": ["none", "Down", "Down"], ... } / ["Up", "Up", "Up"]
+          // ピンチは pinch ("In" / "Out") で、fingers 本の指全体が閉じる/開くのを判定する
+          //   pinchDistance (既定 0.05) / centroidTolerance / settleMs / repeatDistance は省略可
+          //   例: { "fingers": 4, "pinch": "Out", "repeatDistance": 0.03, "action": { ... } }
           // タップは tapSlot (左から数えた番号) と tapCount (回数、省略で 1)。他の指は触れたまま、その指だけが
           //   触れて離れるのを数える。maxTapMs / maxGapMs / maxTapMove は省略可
           //   例: { "fingers": 3, "tapSlot": 0, "tapCount": 2, "action": { ... } }
@@ -67,6 +70,9 @@ public static class GestureConfig
         public int? Slot { get; set; }
         public string? Direction { get; set; }
         public List<string?>? Motions { get; set; }
+        public string? Pinch { get; set; }
+        public double? PinchDistance { get; set; }
+        public double? CentroidTolerance { get; set; }
         public int? TapSlot { get; set; }
         public int? TapCount { get; set; }
         public long? MaxTapMs { get; set; }
@@ -120,7 +126,34 @@ public static class GestureConfig
             SwipeDirection dir = default;
             SwipeDirection?[]? motions = null;
             bool isTap = b.TapSlot is not null || b.TapCount is not null;
-            if (isTap)
+            bool isPinch = b.Pinch is not null;
+            PinchDirection pinchDir = default;
+            if (isPinch)
+            {
+                if (isTap) errors.Add($"{label}: pinch と tapSlot / tapCount は一緒に指定できません");
+                if (b.Fingers < 2) errors.Add($"{label}: pinch は 2 本以上の指で指定してください");
+                switch (b.Pinch!.Trim().ToLowerInvariant())
+                {
+                    case "in": pinchDir = PinchDirection.In; break;
+                    case "out": pinchDir = PinchDirection.Out; break;
+                    default: errors.Add($"{label}: pinch は In / Out のどちらかです (指定値: {b.Pinch})"); break;
+                }
+                if (b.Slot is not null || b.Direction is not null || b.Motions is not null || b.MinDistance is not null
+                    || b.FixedTolerance is not null)
+                    errors.Add($"{label}: ピンチには slot / direction / motions / minDistance / fixedTolerance は使えません");
+                if (b.PinchDistance <= 0) errors.Add($"{label}: pinchDistance は 0 より大きい値にしてください");
+                if (b.CentroidTolerance < 0) errors.Add($"{label}: centroidTolerance は 0 以上にしてください");
+            }
+            else if (b.PinchDistance is not null || b.CentroidTolerance is not null)
+            {
+                errors.Add($"{label}: pinchDistance / centroidTolerance は pinch と一緒にだけ指定できます");
+            }
+            if (isPinch)
+            {
+                if (b.MaxTapMs is not null || b.MaxGapMs is not null || b.MaxTapMove is not null)
+                    errors.Add($"{label}: maxTapMs / maxGapMs / maxTapMove はタップにだけ使えます");
+            }
+            else if (isTap)
             {
                 if (b.TapSlot is null) errors.Add($"{label}: tapSlot が必要です");
                 else if (b.Fingers >= 1 && (b.TapSlot < 0 || b.TapSlot >= b.Fingers))
@@ -164,7 +197,18 @@ public static class GestureConfig
 
             int fingers = b.Fingers!.Value;
             IGestureSpec spec;
-            if (isTap)
+            if (isPinch)
+            {
+                var pin = new PinchSpec(
+                    string.IsNullOrEmpty(b.Name) ? $"{fingers}本指ピンチ{(pinchDir == PinchDirection.Out ? "アウト" : "イン")}" : b.Name,
+                    fingers, pinchDir);
+                if (b.PinchDistance is double pd) pin = pin with { PinchDistance = pd };
+                if (b.CentroidTolerance is double ct) pin = pin with { CentroidTolerance = ct };
+                if (b.SettleMs is long ps) pin = pin with { SettleMs = ps };
+                if (b.RepeatDistance is double pr) pin = pin with { RepeatDistance = pr };
+                spec = pin;
+            }
+            else if (isTap)
             {
                 int ts = b.TapSlot!.Value, tc = b.TapCount ?? 1;
                 var tap = new TapSpec(

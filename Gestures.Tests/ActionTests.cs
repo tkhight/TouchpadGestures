@@ -49,6 +49,10 @@ public class ActionTests
     [InlineData("a", 0x41)]
     [InlineData("5", 0x35)]
     [InlineData("VolumeUp", 0xAF)]
+    [InlineData("Plus", 0xBB)]
+    [InlineData("Minus", 0xBD)]
+    [InlineData("NumAdd", 0x6B)]
+    [InlineData("NumSubtract", 0x6D)]
     public void KeyNames_Parse(string name, int expected)
         => Assert.Equal((ushort)expected, KeyNames.Parse(name));
 

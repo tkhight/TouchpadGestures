@@ -78,6 +78,9 @@ public static class KeyNames
         ["PageUp"] = 0x21, ["PageDown"] = 0x22, ["PrintScreen"] = 0x2C,
         ["Left"] = 0x25, ["Up"] = 0x26, ["Right"] = 0x27, ["Down"] = 0x28,
         ["VolumeMute"] = 0xAD, ["VolumeDown"] = 0xAE, ["VolumeUp"] = 0xAF,
+        // 記号キーは配列によって位置が違う (Plus / Minus は OEM キー)。ズームなら Ctrl+NumAdd が配列に依らず確実
+        ["Plus"] = 0xBB, ["Minus"] = 0xBD, ["Comma"] = 0xBC, ["Period"] = 0xBE,
+        ["NumAdd"] = 0x6B, ["NumSubtract"] = 0x6D, ["NumMultiply"] = 0x6A, ["NumDivide"] = 0x6F,
         ["MediaNext"] = 0xB0, ["MediaPrev"] = 0xB1, ["MediaStop"] = 0xB2, ["MediaPlayPause"] = 0xB3,
     };
 
@@ -104,6 +107,9 @@ public sealed record GestureBinding(IGestureSpec Spec, IGestureAction Action)
 
     /// <summary>タップの定義のとき。それ以外は null。</summary>
     public TapSpec? Tap => Spec as TapSpec;
+
+    /// <summary>ピンチの定義のとき。それ以外は null。</summary>
+    public PinchSpec? Pinch => Spec as PinchSpec;
 }
 
 /// <summary>判定結果に応じて、対応する動作を実行する。</summary>
