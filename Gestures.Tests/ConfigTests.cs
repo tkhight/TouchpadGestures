@@ -109,7 +109,7 @@ public class ConfigTests
         Assert.Contains("bindings[1]", errs[1]);
         Assert.Contains("direction", errs[1]);
         Assert.Contains("Banana", errs[2]);
-        Assert.Contains("一方だけ", errs[3]);
+        Assert.Contains("一緒に指定できません", errs[3]);
         Assert.Contains("action が必要", errs[4]);
         Assert.Contains("wheel", errs[5]);
         Assert.Contains("minDistance", errs[6]);

@@ -35,6 +35,11 @@ public static class GestureConfig
           // タップは tapSlot (左から数えた番号) と tapCount (回数、省略で 1)。他の指は触れたまま、その指だけが
           //   触れて離れるのを数える。maxTapMs / maxGapMs / maxTapMove は省略可
           //   例: { "fingers": 3, "tapSlot": 0, "tapCount": 2, "action": { ... } }
+          // 動作は hotkey (キー) / wheel (ホイール) / click (Left / Right / Middle。count で回数) のどれか
+          //   hotkey と click を一緒に書くと、そのキーを押したままクリックする: "action": { "hotkey": "Win", "click": "Left" }
+          //   click に "hold": true を足すと、押したままにして、全部の指が離れたら離す (指の動きでカーソルも動く。"follow": false で止める)
+          //   hold と count を一緒に書くと、count 回目を押したままにする (count: 2 = 1 回タップして、2 回目を押したまま = ダブルタップして押したまま)
+          //   例: PowerToys の「つかんで移動」: "action": { "hotkey": "Win", "click": "Left", "count": 2, "hold": true }
           // "enabled": false を付けると、その割り当てだけを一時的に無効にできる (省略 = 有効)
           // app を付けると、そのアプリ (プロセス名。"chrome" / "Code.exe" など) が前面のときだけ有効になる。
           //   同じジェスチャーが app なしにもあるときは、app 付きが優先される。プロセス名は画面のログに [ ] で出る
@@ -320,11 +325,46 @@ public static class GestureConfig
             errors.Add($"{label}: action が必要です");
             return null;
         }
-        bool hasHotkey = a.Hotkey is not null, hasWheel = a.Wheel is not null;
-        if (hasHotkey == hasWheel)
+        bool hasHotkey = a.Hotkey is not null, hasWheel = a.Wheel is not null, hasClick = a.Click is not null;
+        if (hasWheel && (hasHotkey || hasClick))
         {
-            errors.Add($"{label}: action には hotkey か wheel のどちらか一方だけを指定してください");
+            errors.Add($"{label}: wheel は hotkey / click と一緒に指定できません");
             return null;
+        }
+        if (!hasHotkey && !hasWheel && !hasClick)
+        {
+            errors.Add($"{label}: action には hotkey か wheel か click のどれかを指定してください");
+            return null;
+        }
+        if (a.Count is not null && !hasClick) errors.Add($"{label}: count は click と一緒にだけ指定できます");
+        if (a.Hold == true && !hasClick) errors.Add($"{label}: hold は click と一緒にだけ指定できます");
+        if ((a.Follow is not null || a.Speed is not null) && a.Hold != true)
+            errors.Add($"{label}: follow / speed は hold と一緒にだけ指定できます");
+        if (a.Speed <= 0) errors.Add($"{label}: speed は 0 より大きい値にしてください");
+        if (hasClick)
+        {
+            if (a.Horizontal is not null) errors.Add($"{label}: horizontal は wheel と一緒にだけ指定できます");
+            MouseButton button;
+            switch (a.Click!.Trim().ToLowerInvariant())
+            {
+                case "left": button = MouseButton.Left; break;
+                case "right": button = MouseButton.Right; break;
+                case "middle": button = MouseButton.Middle; break;
+                default:
+                    errors.Add($"{label}: click は Left / Right / Middle のどれかです (指定値: {a.Click})");
+                    return null;
+            }
+            if (a.Count is < 1 or > 5)
+            {
+                errors.Add($"{label}: count は 1 〜 5 にしてください (指定値: {a.Count})");
+                return null;
+            }
+            try
+            {
+                if (a.Hold == true) return new HoldAction(button, a.Hotkey, a.Follow ?? true, a.Speed > 0 ? a.Speed.Value : 1.0, a.Count ?? 1);
+                return new ClickAction(button, a.Count ?? 1, a.Hotkey);
+            }
+            catch (FormatException ex) { errors.Add($"{label}: {ex.Message}"); return null; }
         }
         if (hasHotkey)
         {
@@ -446,7 +486,7 @@ public sealed class BindingEntry
         LandOrder = LandOrder is null ? null : new List<int>(LandOrder), LandMinGapMs = LandMinGapMs, LandMaxGapMs = LandMaxGapMs, LandMaxMove = LandMaxMove,
         TapSlot = TapSlot, TapCount = TapCount, MaxTapMs = MaxTapMs, MaxGapMs = MaxGapMs, MaxTapMove = MaxTapMove,
         MinDistance = MinDistance, FixedTolerance = FixedTolerance, SettleMs = SettleMs, RepeatDistance = RepeatDistance,
-        Action = Action is null ? null : new ActionEntry { Hotkey = Action.Hotkey, Wheel = Action.Wheel, Horizontal = Action.Horizontal },
+        Action = Action is null ? null : new ActionEntry { Hotkey = Action.Hotkey, Wheel = Action.Wheel, Horizontal = Action.Horizontal, Click = Action.Click, Count = Action.Count, Hold = Action.Hold, Follow = Action.Follow, Speed = Action.Speed },
     };
 }
 
@@ -455,4 +495,13 @@ public sealed class ActionEntry
     public string? Hotkey { get; set; }
     public int? Wheel { get; set; }
     public bool? Horizontal { get; set; }
+    /// <summary>Left / Right / Middle。hotkey と一緒に書くと、そのキーを押したままクリックする。</summary>
+    public string? Click { get; set; }
+    public int? Count { get; set; }
+    /// <summary>true なら、click を押したままにして、全部の指が離れたら離す (hotkey のキーも押したまま)。</summary>
+    public bool? Hold { get; set; }
+    /// <summary>hold のとき、指の動きに合わせてカーソルを動かすか (省略 = する)。</summary>
+    public bool? Follow { get; set; }
+    /// <summary>hold + follow のときの、カーソルの動く速さの倍率 (省略 = 1)。</summary>
+    public double? Speed { get; set; }
 }

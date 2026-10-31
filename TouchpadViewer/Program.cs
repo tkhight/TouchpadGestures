@@ -470,6 +470,7 @@ namespace TouchpadViewer
                     AddLog("設定ファイルの見本を作成しました");
                 }
                 IReadOnlyList<Gestures.GestureBinding> bindings = Gestures.GestureConfig.Load(path);
+                ReleaseHolds();
                 dispatcher = new Gestures.GestureDispatcher(bindings, sender, Gestures.ForegroundApp.GetProcessName);
                 AddLog("設定を読み込みました: " + bindings.Count + "件");
                 ok = true;
@@ -484,6 +485,14 @@ namespace TouchpadViewer
             }
             dirty = true;
             return ok;
+        }
+
+        // 押し続けている動作 (Win + 左ボタンなど) があれば離す。キーやボタンが押しっぱなしにならないようにする
+        void ReleaseHolds()
+        {
+            if (dispatcher == null) return;
+            try { dispatcher.ReleaseAll(); }
+            catch (Exception ex) { AddLog("押し続けの解放に失敗: " + ex.Message); }
         }
 
         // 連続発火の回数を数えるためのキー (「本数・動かす指・方向」。名前は設定で変えられるため使わない)
@@ -932,7 +941,7 @@ namespace TouchpadViewer
             tray.DoubleClick += delegate { ShowFromTray(); };
             tray.Visible = true;
 
-            chkExec.CheckedChanged += delegate { UpdateTrayState(); };
+            chkExec.CheckedChanged += delegate { UpdateTrayState(); if (!chkExec.Checked) ReleaseHolds(); };
             UpdateTrayState();
         }
 
@@ -1084,6 +1093,7 @@ namespace TouchpadViewer
         void ExitApp()
         {
             exiting = true;
+            ReleaseHolds();
             tray.Visible = false; // 終了後にアイコンが残らないように
             tray.Dispose();
             Application.Exit();
@@ -1244,6 +1254,7 @@ namespace TouchpadViewer
 
         protected override void OnFormClosed(FormClosedEventArgs e)
         {
+            ReleaseHolds();
             foreach (PtpDevice d in devices.Values) if (d != null) d.Dispose();
             devices.Clear();
             base.OnFormClosed(e);

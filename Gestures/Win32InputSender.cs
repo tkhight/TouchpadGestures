@@ -11,6 +11,9 @@ public sealed class Win32InputSender : IInputSender
     const uint INPUT_KEYBOARD = 1;
     const uint KEYEVENTF_EXTENDEDKEY = 0x0001;
     const uint KEYEVENTF_KEYUP = 0x0002;
+    const uint MOUSEEVENTF_LEFTDOWN = 0x0002, MOUSEEVENTF_LEFTUP = 0x0004;
+    const uint MOUSEEVENTF_RIGHTDOWN = 0x0008, MOUSEEVENTF_RIGHTUP = 0x0010;
+    const uint MOUSEEVENTF_MIDDLEDOWN = 0x0020, MOUSEEVENTF_MIDDLEUP = 0x0040;
     const uint MOUSEEVENTF_WHEEL = 0x0800;
     const uint MOUSEEVENTF_HWHEEL = 0x1000;
 
@@ -65,6 +68,40 @@ public sealed class Win32InputSender : IInputSender
         input.u.mi.mouseData = unchecked((uint)delta);
         input.u.mi.dwFlags = horizontal ? MOUSEEVENTF_HWHEEL : MOUSEEVENTF_WHEEL;
         Send(input);
+    }
+
+    const uint MOUSEEVENTF_MOVE = 0x0001;
+
+    public void MouseButtonEvent(MouseButton button, bool down)
+    {
+        uint flag = (button, down) switch
+        {
+            (MouseButton.Left, true) => MOUSEEVENTF_LEFTDOWN,
+            (MouseButton.Left, false) => MOUSEEVENTF_LEFTUP,
+            (MouseButton.Right, true) => MOUSEEVENTF_RIGHTDOWN,
+            (MouseButton.Right, false) => MOUSEEVENTF_RIGHTUP,
+            (_, true) => MOUSEEVENTF_MIDDLEDOWN,
+            _ => MOUSEEVENTF_MIDDLEUP,
+        };
+        Send(new INPUT { type = INPUT_MOUSE, u = { mi = { dwFlags = flag } } });
+    }
+
+    public void MoveCursor(int dx, int dy)
+        => Send(new INPUT { type = INPUT_MOUSE, u = { mi = { dx = dx, dy = dy, dwFlags = MOUSEEVENTF_MOVE } } });
+
+    public void Click(MouseButton button, int count)
+    {
+        var (down, up) = button switch
+        {
+            MouseButton.Left => (MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP),
+            MouseButton.Right => (MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP),
+            _ => (MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP),
+        };
+        for (int i = 0; i < count; i++)
+        {
+            Send(new INPUT { type = INPUT_MOUSE, u = { mi = { dwFlags = down } } });
+            Send(new INPUT { type = INPUT_MOUSE, u = { mi = { dwFlags = up } } });
+        }
     }
 
     void SendKey(ushort vk, bool up)

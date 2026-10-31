@@ -101,6 +101,10 @@ public static class BindingEditing
     {
         var a = e.Action;
         if (a is null) return "";
+        if (a.Click is not null && a.Hold == true)
+            return (a.Hotkey is null ? "" : a.Hotkey + " + ") + "押し続ける(" + a.Click + (a.Count > 1 ? " ×" + a.Count : "") + ")";
+        if (a.Click is not null)
+            return (a.Hotkey is null ? "" : a.Hotkey + " + ") + "クリック(" + a.Click + (a.Count > 1 ? " ×" + a.Count : "") + ")";
         if (a.Hotkey is not null) return a.Hotkey;
         if (a.Wheel is int w) return (a.Horizontal == true ? "横ホイール " : "ホイール ") + w;
         return "";

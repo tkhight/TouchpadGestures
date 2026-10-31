@@ -66,6 +66,12 @@ namespace TouchpadViewer
         readonly ComboBox cboPinch = new ComboBox();
         readonly RadioButton rbHotkey = new RadioButton();
         readonly RadioButton rbWheel = new RadioButton();
+        readonly RadioButton rbClick = new RadioButton();
+        readonly ComboBox cboClick = new ComboBox();
+        readonly NumericUpDown numClickCount = new NumericUpDown();
+        readonly CheckBox chkHold = new CheckBox();
+        readonly CheckBox chkFollow = new CheckBox();
+        readonly NumericUpDown numSpeed = new NumericUpDown();
         readonly TextBox txtHotkey = new TextBox();
         readonly Button btnCapture = new Button();
         readonly NumericUpDown numWheel = new NumericUpDown();
@@ -81,7 +87,7 @@ namespace TouchpadViewer
 
             Text = "ジェスチャーの設定";
             Font = SystemFonts.MessageBoxFont;
-            ClientSize = new Size(960, 640);
+            ClientSize = new Size(960, 700);
             MinimumSize = new Size(900, 620);
             StartPosition = FormStartPosition.CenterParent;
             AutoScaleMode = AutoScaleMode.Dpi;
@@ -116,8 +122,8 @@ namespace TouchpadViewer
             list.GridLines = true;
             list.Dock = DockStyle.Fill;
             list.Columns.Add("アプリ", 80);
-            list.Columns.Add("ジェスチャー", 190);
-            list.Columns.Add("動作", 100);
+            list.Columns.Add("ジェスチャー", 165);
+            list.Columns.Add("動作", 125);
             list.SelectedIndexChanged += delegate { OnListSelected(); };
 
             FlowLayoutPanel buttons = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 40, Padding = new Padding(0, 6, 0, 0) };
@@ -243,7 +249,7 @@ namespace TouchpadViewer
             flow.Controls.Add(grpLand);
 
             // 動作
-            GroupBox grpAction = new GroupBox { Text = "動作", Width = 520, Height = 110 };
+            GroupBox grpAction = new GroupBox { Text = "動作", Width = 520, Height = 196 };
             rbHotkey.Text = "キー"; rbHotkey.AutoSize = true; rbHotkey.Location = new Point(10, 26); rbHotkey.Checked = true;
             txtHotkey.Location = new Point(100, 24);
             txtHotkey.Width = 200;
@@ -259,7 +265,36 @@ namespace TouchpadViewer
             numWheel.Value = 1;
             chkHorizontal.Text = "横方向"; chkHorizontal.AutoSize = true; chkHorizontal.Location = new Point(172, 62);
             Label wheelNote = new Label { Text = "1 = 1 ノッチ上/右、負の値 = 下/左", AutoSize = true, Location = new Point(260, 62) };
-            grpAction.Controls.AddRange(new Control[] { rbHotkey, txtHotkey, btnCapture, rbWheel, numWheel, chkHorizontal, wheelNote });
+            rbClick.Text = "クリック"; rbClick.AutoSize = true; rbClick.Location = new Point(10, 98);
+            cboClick.DropDownStyle = ComboBoxStyle.DropDownList;
+            cboClick.Items.AddRange(new object[] { "左", "右", "中" });
+            cboClick.SelectedIndex = 0;
+            cboClick.Location = new Point(100, 96);
+            cboClick.Width = 56;
+            Label countLabel = new Label { Text = "回数", AutoSize = true, Location = new Point(168, 100) };
+            numClickCount.Location = new Point(206, 96);
+            numClickCount.Width = 50;
+            numClickCount.Minimum = 1;
+            numClickCount.Maximum = 5;
+            Label clickNote = new Label { Text = "「キー」欄のキーを押したまま", AutoSize = true, Location = new Point(268, 100) };
+            chkHold.Text = "最後の1回を、指を離すまで押し続ける (回数2 = ダブルタップして押したまま)";
+            chkHold.AutoSize = true;
+            chkHold.Location = new Point(100, 130);
+            chkFollow.Text = "指の動きでカーソルを動かす";
+            chkFollow.AutoSize = true;
+            chkFollow.Checked = true;
+            chkFollow.Location = new Point(122, 158);
+            numClickCount.Maximum = 5;
+            Label speedLabel = new Label { Text = "速さ", AutoSize = true, Location = new Point(340, 160) };
+            numSpeed.Location = new Point(374, 156);
+            numSpeed.Width = 60;
+            numSpeed.DecimalPlaces = 1;
+            numSpeed.Increment = 0.1M;
+            numSpeed.Minimum = 0.1M;
+            numSpeed.Maximum = 10M;
+            numSpeed.Value = 1M;
+            grpAction.Controls.AddRange(new Control[] { rbHotkey, txtHotkey, btnCapture, rbWheel, numWheel, chkHorizontal, wheelNote,
+                rbClick, cboClick, countLabel, numClickCount, clickNote, chkHold, chkFollow, speedLabel, numSpeed });
             flow.Controls.Add(grpAction);
 
             // 詳細
@@ -294,6 +329,12 @@ namespace TouchpadViewer
             cboPinch.SelectedIndexChanged += changed;
             rbHotkey.CheckedChanged += changed;
             rbWheel.CheckedChanged += changed;
+            rbClick.CheckedChanged += changed;
+            cboClick.SelectedIndexChanged += changed;
+            numClickCount.ValueChanged += changed;
+            chkHold.CheckedChanged += changed;
+            chkFollow.CheckedChanged += changed;
+            numSpeed.ValueChanged += changed;
             txtHotkey.TextChanged += changed;
             numWheel.ValueChanged += changed;
             chkHorizontal.CheckedChanged += changed;
@@ -619,8 +660,18 @@ namespace TouchpadViewer
             }
 
             bool wheel = e.Action != null && e.Action.Wheel != null;
+            bool click = e.Action != null && e.Action.Click != null;
             rbWheel.Checked = wheel;
-            rbHotkey.Checked = !wheel;
+            rbClick.Checked = click;
+            rbHotkey.Checked = !wheel && !click;
+            string clickName = click ? e.Action.Click.Trim().ToLowerInvariant() : "left";
+            cboClick.SelectedIndex = clickName == "right" ? 1 : clickName == "middle" ? 2 : 0;
+            numClickCount.Value = Math.Min(Math.Max(e.Action != null && e.Action.Count != null ? e.Action.Count.Value : 1,
+                (int)numClickCount.Minimum), (int)numClickCount.Maximum);
+            chkHold.Checked = e.Action != null && e.Action.Hold == true;
+            chkFollow.Checked = e.Action == null || e.Action.Follow != false;
+            numSpeed.Value = Math.Min(Math.Max(e.Action != null && e.Action.Speed != null ? (decimal)e.Action.Speed.Value : 1M,
+                numSpeed.Minimum), numSpeed.Maximum);
             txtHotkey.Text = e.Action != null ? e.Action.Hotkey ?? "" : "";
             numWheel.Value = Math.Min(Math.Max(e.Action != null && e.Action.Wheel != null ? e.Action.Wheel.Value : 1,
                 (int)numWheel.Minimum), (int)numWheel.Maximum);
@@ -683,9 +734,20 @@ namespace TouchpadViewer
                 t.Set(e, v);
             }
 
-            e.Action = rbWheel.Checked
-                ? new ActionEntry { Wheel = (int)numWheel.Value, Horizontal = chkHorizontal.Checked ? true : (bool?)null }
-                : new ActionEntry { Hotkey = txtHotkey.Text.Trim() };
+            if (rbWheel.Checked)
+                e.Action = new ActionEntry { Wheel = (int)numWheel.Value, Horizontal = chkHorizontal.Checked ? true : (bool?)null };
+            else if (rbClick.Checked)
+                e.Action = new ActionEntry
+                {
+                    Click = new[] { "Left", "Right", "Middle" }[Math.Max(cboClick.SelectedIndex, 0)],
+                    Count = numClickCount.Value > 1 ? (int)numClickCount.Value : (int?)null,
+                    Hotkey = NullIfEmpty(txtHotkey.Text),
+                    Hold = chkHold.Checked ? true : (bool?)null,
+                    Follow = chkHold.Checked && !chkFollow.Checked ? false : (bool?)null,
+                    Speed = chkHold.Checked && numSpeed.Value != 1M ? (double)numSpeed.Value : (double?)null,
+                };
+            else
+                e.Action = new ActionEntry { Hotkey = txtHotkey.Text.Trim() };
 
             RefreshRow(e);
             ShowValidation(uiErrors);
