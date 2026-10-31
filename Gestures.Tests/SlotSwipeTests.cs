@@ -27,6 +27,25 @@ public class SlotSwipeTests
     }
 
     [Fact]
+    public void DefaultThresholds_AreTheTunedValues()
+    {
+        var spec = new SlotSwipeSpec("x", 3, 0, SwipeDirection.Right);
+        Assert.Equal(0.10, spec.MinDistance);     // 実機の記録で 0.15 は厳しすぎたため 0.10 に下げた
+        Assert.Equal(0.03, spec.FixedTolerance);
+        Assert.Equal(40, spec.SettleMs);
+        Assert.Null(spec.RepeatDistance);
+    }
+
+    [Fact]
+    public void SwipeJustOverTheDefaultMinDistance_Fires_AndJustUnderDoesNot()
+    {
+        var over = Landing().Concat(new[] { F(150, (1, 0.31, 0.5), (2, 0.4, 0.5), (3, 0.7, 0.5)) });   // 0.11 進む
+        var under = Landing().Concat(new[] { F(150, (1, 0.29, 0.5), (2, 0.4, 0.5), (3, 0.7, 0.5)) });  // 0.09 進む
+        Assert.Equal(1, Run(LeftRight, over));
+        Assert.Equal(0, Run(LeftRight, under));
+    }
+
+    [Fact]
     public void LeftFingerSwipesRight_OthersFixed_Fires()
     {
         var frames = Landing().Concat(new[]

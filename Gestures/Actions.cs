@@ -115,11 +115,15 @@ public sealed class GestureDispatcher
         _sender = sender;
     }
 
-    /// <summary>フレームを与え、発火した定義の動作を実行して、その定義を返す。</summary>
-    public IReadOnlyList<SlotSwipeSpec> Feed(Frame frame)
+    /// <summary>
+    /// フレームを与え、発火した定義を返す。execute が true のときは、その動作も実行する。
+    /// execute が false でも判定は進む(画面表示や、しきい値の調整のため)。送信だけが行われない。
+    /// </summary>
+    public IReadOnlyList<SlotSwipeSpec> Feed(Frame frame, bool execute = true)
     {
         var fired = _engine.Feed(frame);
-        foreach (var spec in fired) _actions[spec].Execute(_sender);
+        if (execute)
+            foreach (var spec in fired) _actions[spec].Execute(_sender);
         return fired;
     }
 }

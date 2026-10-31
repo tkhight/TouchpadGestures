@@ -16,17 +16,26 @@ public enum SwipeDirection { Left, Right, Up, Down }
 /// 「FingerCount 本のうち、左から MovingSlot 番目(0 始まり)の指だけが Direction へ動き、
 /// 残りは固定」というジェスチャーの定義。
 /// </summary>
-/// <param name="MinDistance">動く指が進むべき距離。</param>
+/// <param name="MinDistance">
+/// 動く指が進むべき距離。既定は 0.10。実機(小さなパッド)の記録では、0.15 だと自然なスワイプの約 1 割しか
+/// 届かなかったため、0.15 から下げた。
+/// </param>
 /// <param name="FixedTolerance">固定すべき指に許す最大移動量(ジッタ吸収)。</param>
 /// <param name="SettleMs">指が揃ってから基準位置を取るまでの待ち時間。</param>
+/// <param name="RepeatDistance">
+/// null なら 1 回の接触につき 1 回だけ発火する。値があれば、最初の発火のあと
+/// 同じ方向にこの距離だけ進むたびに再び発火する(音量やスクロールの連続操作用)。
+/// 戻してから進み直した場合は、折り返した位置から数え直す。
+/// </param>
 public sealed record SlotSwipeSpec(
     string Name,
     int FingerCount,
     int MovingSlot,
     SwipeDirection Direction,
-    double MinDistance = 0.15,
+    double MinDistance = 0.10,
     double FixedTolerance = 0.03,
-    long SettleMs = 40);
+    long SettleMs = 40,
+    double? RepeatDistance = null);
 
 /// <summary>
 /// 1 つの SlotSwipeSpec を判定する。
@@ -36,27 +45,40 @@ public sealed record SlotSwipeSpec(
 /// </summary>
 public sealed class SlotSwipeRecognizer
 {
-    enum State { Idle, Settling, Tracking, Done }
+    enum State { Idle, Settling, Tracking, Repeating, Done }
+
+    /// <summary>1 フレームで連続発火できる回数の上限 (極端に小さい RepeatDistance への備え)。</summary>
+    public const int MaxFiresPerFrame = 20;
 
     readonly Dictionary<int, int> _slotById = new();
     readonly Dictionary<int, (double X, double Y)> _baseline = new();
     readonly HashSet<int> _ids = new();
     State _state = State.Idle;
     long _settleStart;
+    double _anchor; // 連続発火: 直近に発火した位置 (動く指の進行距離)
 
     public SlotSwipeSpec Spec { get; }
+
+    /// <summary>直前の Feed で発火した回数。Feed が false のときは 0。</summary>
+    public int LastFireCount { get; private set; }
 
     public SlotSwipeRecognizer(SlotSwipeSpec spec)
     {
         if (spec.FingerCount < 1) throw new ArgumentOutOfRangeException(nameof(spec), "FingerCount must be >= 1");
         if (spec.MovingSlot < 0 || spec.MovingSlot >= spec.FingerCount)
             throw new ArgumentOutOfRangeException(nameof(spec), "MovingSlot must be in [0, FingerCount)");
+        if (spec.RepeatDistance <= 0)
+            throw new ArgumentOutOfRangeException(nameof(spec), "RepeatDistance must be > 0");
         Spec = spec;
     }
 
-    /// <summary>フレームを 1 つ与える。発火した瞬間だけ true(1 回の接触につき 1 回)。</summary>
+    /// <summary>
+    /// フレームを 1 つ与える。発火したフレームだけ true(回数は LastFireCount)。
+    /// RepeatDistance が null なら 1 回の接触につき 1 回だけ。
+    /// </summary>
     public bool Feed(Frame frame)
     {
+        LastFireCount = 0;
         var contacts = frame.Contacts;
 
         if (_state != State.Idle && !SameIds(contacts)) Reset();
@@ -75,6 +97,7 @@ public sealed class SlotSwipeRecognizer
                 return false;
 
             case State.Tracking:
+            case State.Repeating:
                 return Track(contacts);
 
             default:
@@ -122,12 +145,36 @@ public sealed class SlotSwipeRecognizer
             _ => (-mdy, mdx),
         };
 
-        if (along >= Spec.MinDistance && Math.Abs(perp) <= along) // 進行方向から 45° 以内
+        bool inDirection = Math.Abs(perp) <= along; // 進行方向から 45° 以内
+
+        if (_state == State.Tracking)
         {
-            _state = State.Done;
+            if (along < Spec.MinDistance || !inDirection) return false;
+
+            // 最初の発火。一気に大きく動いたときは、超えた分の連続発火も同じフレームで行う
+            int n = 1;
+            if (Spec.RepeatDistance is double first)
+                n = Math.Min(1 + (int)Math.Floor((along - Spec.MinDistance) / first), MaxFiresPerFrame);
+            _anchor = Spec.MinDistance + (n - 1) * (Spec.RepeatDistance ?? 0);
+            _state = Spec.RepeatDistance is null ? State.Done : State.Repeating;
+            LastFireCount = n;
             return true;
         }
-        return false;
+
+        // 連続発火中: 直近の発火位置から RepeatDistance 進むたびに発火する
+        double step = Spec.RepeatDistance!.Value;
+        if (along < _anchor)
+        {
+            // 戻した: 折り返した位置から数え直す (ただし最初の発火位置より手前には戻さない)
+            _anchor = Math.Max(Spec.MinDistance, along);
+            return false;
+        }
+        if (!inDirection || along < _anchor + step) return false;
+
+        int count = Math.Min((int)Math.Floor((along - _anchor) / step), MaxFiresPerFrame);
+        _anchor += count * step;
+        LastFireCount = count;
+        return true;
     }
 
     bool SameIds(IReadOnlyList<Contact> contacts)
@@ -154,12 +201,16 @@ public sealed class GestureEngine
     public GestureEngine(IEnumerable<SlotSwipeSpec> specs)
         => _recognizers = specs.Select(s => new SlotSwipeRecognizer(s)).ToList();
 
-    /// <summary>このフレームで発火したジェスチャー定義を返す。</summary>
+    /// <summary>
+    /// このフレームで発火したジェスチャー定義を返す。連続発火で複数回発火したときは、
+    /// その回数ぶん同じ定義が並ぶ。
+    /// </summary>
     public IReadOnlyList<SlotSwipeSpec> Feed(Frame frame)
     {
         var fired = new List<SlotSwipeSpec>();
         foreach (var r in _recognizers)
-            if (r.Feed(frame)) fired.Add(r.Spec);
+            if (r.Feed(frame))
+                for (int i = 0; i < r.LastFireCount; i++) fired.Add(r.Spec);
         return fired;
     }
 }

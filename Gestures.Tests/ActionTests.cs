@@ -127,6 +127,27 @@ public class ActionTests
     }
 
     [Fact]
+    public void Dispatcher_ExecuteFalse_StillRecognizes_ButSendsNothing()
+    {
+        var s = new FakeSender();
+        var spec = new SlotSwipeSpec("left-right", 3, 0, SwipeDirection.Right);
+        var d = new GestureDispatcher(new[] { new GestureBinding(spec, new HotkeyAction("A")) }, s);
+
+        var fired = new List<string>();
+        foreach (var f in new[]
+        {
+            F(0,   (1, 0.2, 0.5), (2, 0.4, 0.5), (3, 0.7, 0.5)),
+            F(50,  (1, 0.2, 0.5), (2, 0.4, 0.5), (3, 0.7, 0.5)),
+            F(100, (1, 0.2, 0.5), (2, 0.4, 0.5), (3, 0.7, 0.5)),
+            F(150, (1, 0.4, 0.5), (2, 0.4, 0.5), (3, 0.7, 0.5)),
+        })
+            fired.AddRange(d.Feed(f, execute: false).Select(x => x.Name));
+
+        Assert.Equal(new[] { "left-right" }, fired); // 判定は動く
+        Assert.Empty(s.Log);                          // 送信はしない
+    }
+
+    [Fact]
     [System.Runtime.Versioning.SupportedOSPlatform("windows")]
     public void Win32_InputStructHasNativeSize()
     {

@@ -22,20 +22,21 @@ public static class GestureConfig
     public const string SampleJson = """
         {
           // slot は左から数えた番号 (0 始まり)。direction は Left / Right / Up / Down
-          // minDistance / fixedTolerance / settleMs は省略可 (パッド幅 = 1.0 の値)
+          // minDistance / fixedTolerance / settleMs / repeatDistance は省略可 (パッド幅 = 1.0 の値)
+          // repeatDistance を付けると、スワイプし続ける間 その距離ごとに連続で発火する
           "bindings": [
             { "name": "3本指・左だけ←", "fingers": 3, "slot": 0, "direction": "Left",
               "action": { "hotkey": "Alt+Left" } },
             { "name": "3本指・左だけ→", "fingers": 3, "slot": 0, "direction": "Right",
               "action": { "hotkey": "Alt+Right" } },
             { "name": "3本指・中だけ↑", "fingers": 3, "slot": 1, "direction": "Up",
-              "action": { "wheel": 3 } },
+              "repeatDistance": 0.03, "action": { "wheel": 1 } },
             { "name": "3本指・中だけ↓", "fingers": 3, "slot": 1, "direction": "Down",
-              "action": { "wheel": -3 } },
+              "repeatDistance": 0.03, "action": { "wheel": -1 } },
             { "name": "3本指・右だけ↑", "fingers": 3, "slot": 2, "direction": "Up",
-              "action": { "hotkey": "VolumeUp" } },
+              "repeatDistance": 0.05, "action": { "hotkey": "VolumeUp" } },
             { "name": "3本指・右だけ↓", "fingers": 3, "slot": 2, "direction": "Down",
-              "action": { "hotkey": "VolumeDown" } }
+              "repeatDistance": 0.05, "action": { "hotkey": "VolumeDown" } }
           ]
         }
         """;
@@ -63,6 +64,7 @@ public static class GestureConfig
         public double? MinDistance { get; set; }
         public double? FixedTolerance { get; set; }
         public long? SettleMs { get; set; }
+        public double? RepeatDistance { get; set; }
         public ActionDto? Action { get; set; }
     }
 
@@ -114,6 +116,7 @@ public static class GestureConfig
             if (b.MinDistance <= 0) errors.Add($"{label}: minDistance は 0 より大きい値にしてください");
             if (b.FixedTolerance < 0) errors.Add($"{label}: fixedTolerance は 0 以上にしてください");
             if (b.SettleMs < 0) errors.Add($"{label}: settleMs は 0 以上にしてください");
+            if (b.RepeatDistance <= 0) errors.Add($"{label}: repeatDistance は 0 より大きい値にしてください");
 
             var action = ParseAction(b.Action, label, errors);
 
@@ -133,6 +136,7 @@ public static class GestureConfig
             if (b.MinDistance is double md) spec = spec with { MinDistance = md };
             if (b.FixedTolerance is double ft) spec = spec with { FixedTolerance = ft };
             if (b.SettleMs is long sm) spec = spec with { SettleMs = sm };
+            if (b.RepeatDistance is double rd) spec = spec with { RepeatDistance = rd };
 
             result.Add(new GestureBinding(spec, action!));
         }

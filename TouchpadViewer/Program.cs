@@ -121,7 +121,8 @@ namespace TouchpadViewer
         public static extern uint GetRawInputDeviceList(
             [Out] RAWINPUTDEVICELIST[] list, ref uint count, uint size);
 
-        [DllImport("user32.dll")]
+        // 既定 (Ansi) だと GetRawInputDeviceInfoA が呼ばれ、デバイス名が ANSI で返って文字化けする
+        [DllImport("user32.dll", EntryPoint = "GetRawInputDeviceInfoW")]
         public static extern uint GetRawInputDeviceInfo(
             IntPtr device, uint command, IntPtr data, ref uint size);
 
@@ -395,11 +396,12 @@ namespace TouchpadViewer
         bool dirty = true;
         string registerError = "";
 
-        readonly Gestures.GestureEngine engine = new Gestures.GestureEngine(BuildSpecs());
         readonly Stopwatch clock = Stopwatch.StartNew();
         readonly List<string> gestureLog = new List<string>();
         string flashText = "";
         long flashUntilMs;
+        // 連続発火の回数 (指を全部離すまでの合計)。画面に「× N」と出すための集計
+        readonly Dictionary<string, int> repeatTotals = new Dictionary<string, int>();
 
         // 実行は既定で OFF。テスト中に意図せずキー入力が飛ばないようにする
         readonly CheckBox chkExec = new CheckBox();
@@ -417,8 +419,15 @@ namespace TouchpadViewer
         const int SimMaxFingers = 5;
         const int SimSlotsPerReport = 4; // 5本指が2レポートに分割され、Hybrid の経路を通る
 
-        // 割り当ての設定ファイル。無ければ見本を書き出す
-        static string ConfigPath
+        // 割り当ての設定ファイル。場所は Gestures.ConfigLocation が決める:
+        //   コマンドラインの --config  >  exe の隣に保存した場所 (「設定ファイルの場所を選ぶ」)  >  既定 (AppData)
+        // 既定の AppData は、Claude など MSIX 版アプリの中から起動すると別のコピーに振り替えられて見える。
+        // 常用する場所は、AppData の外に置いて「設定ファイルの場所を選ぶ」で指定するのがよい
+        readonly string[] cmdArgs;
+        string configPath;
+        string configSource;
+
+        static string DefaultConfigPath
         {
             get
             {
@@ -428,14 +437,34 @@ namespace TouchpadViewer
             }
         }
 
-        // 設定を読み直して dispatcher を作り替える。失敗したら直前の設定を維持する
-        void LoadBindings()
+        string ConfigPath { get { return configPath; } }
+
+        void ResolveConfigLocation()
+        {
+            Gestures.ConfigLocationInfo loc =
+                Gestures.ConfigLocation.Resolve(cmdArgs, AppContext.BaseDirectory, DefaultConfigPath);
+            configPath = loc.Path;
+            configSource = loc.Source;
+        }
+
+        static string ShortPath(string path)
+        {
+            const int max = 46;
+            return path.Length <= max ? path : "…" + path.Substring(path.Length - (max - 1));
+        }
+
+        // 設定を読み直して dispatcher を作り替える。失敗したら直前の設定を維持して false を返す
+        bool LoadBindings()
         {
             string path = ConfigPath;
+            bool ok = false;
             try
             {
                 if (!File.Exists(path))
                 {
+                    // 見本を作るのは既定の場所だけ。選んだ場所にファイルが無いのは、場所の間違いの可能性が高い
+                    if (!string.Equals(path, DefaultConfigPath, StringComparison.OrdinalIgnoreCase))
+                        throw new FileNotFoundException("設定ファイルが見つかりません。", path);
                     Directory.CreateDirectory(Path.GetDirectoryName(path));
                     File.WriteAllText(path, Gestures.GestureConfig.SampleJson, new UTF8Encoding(false));
                     AddLog("設定ファイルの見本を作成しました");
@@ -443,6 +472,7 @@ namespace TouchpadViewer
                 IReadOnlyList<Gestures.GestureBinding> bindings = Gestures.GestureConfig.Load(path);
                 dispatcher = new Gestures.GestureDispatcher(bindings, sender);
                 AddLog("設定を読み込みました: " + bindings.Count + "件");
+                ok = true;
             }
             catch (Exception ex)
             {
@@ -453,9 +483,10 @@ namespace TouchpadViewer
                     "設定エラー (直前の設定を維持します)", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
             dirty = true;
+            return ok;
         }
 
-        // 表示用の判定結果と、割り当て側の判定結果を突き合わせるキー (名前は設定で変わるため)
+        // 連続発火の回数を数えるためのキー (「本数・動かす指・方向」。名前は設定で変えられるため使わない)
         static string SpecKey(Gestures.SlotSwipeSpec s)
         {
             return s.FingerCount + "|" + s.MovingSlot + "|" + s.Direction;
@@ -467,24 +498,6 @@ namespace TouchpadViewer
             if (gestureLog.Count > 8) gestureLog.RemoveAt(gestureLog.Count - 1);
         }
 
-        static IEnumerable<Gestures.SlotSwipeSpec> BuildSpecs()
-        {
-            // 2〜4本指 × 左から k 番目の指だけ × 4方向 をすべて登録する
-            string[] dirs = { "←", "→", "↑", "↓" };
-            Gestures.SwipeDirection[] dirVals = {
-                Gestures.SwipeDirection.Left, Gestures.SwipeDirection.Right,
-                Gestures.SwipeDirection.Up, Gestures.SwipeDirection.Down };
-            for (int n = 2; n <= 4; n++)
-                for (int slot = 0; slot < n; slot++)
-                    for (int d = 0; d < 4; d++)
-                    {
-                        string who = n == 3 ? (slot == 0 ? "左" : (slot == 1 ? "中" : "右"))
-                                            : "左から" + (slot + 1) + "番目";
-                        string name = string.Format("{0}本指・{1}だけ{2}", n, who, dirs[d]);
-                        yield return new Gestures.SlotSwipeSpec(name, n, slot, dirVals[d]);
-                    }
-        }
-
         // 完成した1フレームを判定器に渡す。座標は「パッド幅 = 1.0」に正規化 (Y も XMax で割る)
         void RunGestures(PtpDevice dev)
         {
@@ -494,24 +507,31 @@ namespace TouchpadViewer
                 contacts.Add(new Gestures.Contact(f.Id, f.X / scale, f.Y / scale));
 
             Gestures.Frame frame = new Gestures.Frame(clock.ElapsedMilliseconds, contacts);
-            // 割り当て済みのジェスチャーは、チェックが入っているときだけ SendInput で実行する
-            HashSet<string> executed = new HashSet<string>();
-            if (chkExec.Checked)
+            if (contacts.Count == 0) repeatTotals.Clear();
+
+            // 判定は、設定ファイルの割り当て (しきい値もそのまま) で常に行う。画面の表示もこの結果。
+            // チェックが入っていないときは、SendInput による実行だけを行わない
+            bool execute = chkExec.Checked;
+            IReadOnlyList<Gestures.SlotSwipeSpec> fired;
+            try
             {
-                try
-                {
-                    foreach (Gestures.SlotSwipeSpec s in dispatcher.Feed(frame)) executed.Add(SpecKey(s));
-                }
-                catch (Exception ex)
-                {
-                    AddLog("実行エラー: " + ex.Message);
-                }
+                fired = dispatcher.Feed(frame, execute);
+            }
+            catch (Exception ex)
+            {
+                AddLog("実行エラー: " + ex.Message);
+                return;
             }
 
-            foreach (Gestures.SlotSwipeSpec s in engine.Feed(frame))
+            // 連続発火のときは、同じ定義が発火回数ぶん並ぶ
+            foreach (Gestures.SlotSwipeSpec s in fired)
             {
-                AddLog(s.Name + (executed.Contains(SpecKey(s)) ? "  ▶実行" : ""));
-                flashText = s.Name;
+                string key = SpecKey(s);
+                int total;
+                repeatTotals.TryGetValue(key, out total);
+                repeatTotals[key] = ++total;
+                if (total == 1) AddLog(s.Name + (execute ? "  ▶実行" : ""));
+                flashText = total > 1 ? s.Name + " ×" + total : s.Name; // 連続発火は「× 回数」
                 flashUntilMs = clock.ElapsedMilliseconds + 1200;
             }
         }
@@ -521,8 +541,11 @@ namespace TouchpadViewer
             Color.FromArgb(220, 160, 40), Color.FromArgb(150, 90, 200)
         };
 
-        public MainForm(bool startInTray)
+        public MainForm(bool startInTray, string[] args)
         {
+            cmdArgs = args == null ? new string[0] : args;
+            ResolveConfigLocation();
+
             Text = "Touchpad Viewer (PTP Raw Input)";
             ClientSize = new Size(960, 560);
             DoubleBuffered = true;
@@ -561,6 +584,12 @@ namespace TouchpadViewer
             btnOpen.Width = 150;
             btnOpen.Click += delegate { OpenConfig(); };
 
+            Button btnChoose = new Button();
+            btnChoose.Text = "場所を選ぶ…";
+            btnChoose.Dock = DockStyle.Right;
+            btnChoose.Width = 110;
+            btnChoose.Click += delegate { ChooseConfig(); };
+
             Panel bar = new Panel();
             bar.Dock = DockStyle.Bottom;
             bar.Height = 34;
@@ -574,6 +603,7 @@ namespace TouchpadViewer
             bar.Controls.Add(chkSim);
             bar.Controls.Add(btnReload);
             bar.Controls.Add(btnOpen);
+            bar.Controls.Add(btnChoose);
             Controls.Add(bar);
 
             timer.Interval = 16;
@@ -632,7 +662,9 @@ namespace TouchpadViewer
                         continue;
                     int page = (ushort)Marshal.ReadInt16(buf, 20);
                     int usage = (ushort)Marshal.ReadInt16(buf, 22);
-                    if (page == 0x0D && usage == 0x05) ptpDeviceCount++;
+                    // 用途が Touch Pad でも、PTP の構成 (指ごとの X/Y) を持たない HID がある
+                    // (例: ベンダー定義のデータだけを持つ別インターフェース)。解読できたものだけ数える
+                    if (page == 0x0D && usage == 0x05 && GetDevice(list[i].Device) != null) ptpDeviceCount++;
                 }
                 finally { Marshal.FreeHGlobal(buf); }
             }
@@ -758,6 +790,8 @@ namespace TouchpadViewer
                 sb.AppendLine("右クリック : 指を離す (空所で全員)");
                 sb.AppendLine();
             }
+            sb.AppendLine("設定ファイル (" + configSource + ")");
+            sb.AppendLine("  " + ShortPath(configPath));
             sb.AppendLine("PTP デバイス数 : " + ptpDeviceCount);
             if (registerError.Length > 0) sb.AppendLine(registerError);
             sb.AppendLine("フレーム/秒    : " + fps);
@@ -785,7 +819,7 @@ namespace TouchpadViewer
                 }
             }
             sb.AppendLine();
-            sb.AppendLine("発火したジェスチャー");
+            sb.AppendLine("発火したジェスチャー (設定ファイルの割り当て)");
             sb.AppendLine("-----------------------------");
             if (gestureLog.Count == 0) sb.AppendLine("(まだありません)");
             foreach (string line in gestureLog) sb.AppendLine(line);
@@ -861,6 +895,12 @@ namespace TouchpadViewer
             ToolStripMenuItem miOpen = new ToolStripMenuItem("設定ファイルを開く");
             miOpen.Click += delegate { OpenConfig(); };
 
+            ToolStripMenuItem miChoose = new ToolStripMenuItem("設定ファイルの場所を選ぶ…");
+            miChoose.Click += delegate { ChooseConfig(); };
+
+            ToolStripMenuItem miResetPath = new ToolStripMenuItem("設定ファイルの場所を既定に戻す");
+            miResetPath.Click += delegate { ResetConfigLocation(); };
+
             miAuto = new ToolStripMenuItem("Windows 起動時に自動実行");
             miAuto.Click += OnToggleAutoStart;
 
@@ -870,7 +910,7 @@ namespace TouchpadViewer
             ContextMenuStrip menu = new ContextMenuStrip();
             menu.Items.AddRange(new ToolStripItem[] {
                 miShow, new ToolStripSeparator(),
-                miExec, miReload, miOpen, new ToolStripSeparator(),
+                miExec, miReload, miOpen, miChoose, miResetPath, new ToolStripSeparator(),
                 miAuto, new ToolStripSeparator(),
                 miExit });
             menu.Opening += delegate { RefreshAutoStartItem(); };
@@ -918,6 +958,60 @@ namespace TouchpadViewer
             {
                 MessageBox.Show(this, ex.Message, "自動実行の設定に失敗しました", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
+        }
+
+        // 設定ファイルの場所を選ぶ。読み込めたときだけ、exe の隣に保存して、次回以降も使う
+        void ChooseConfig()
+        {
+            using (OpenFileDialog dlg = new OpenFileDialog())
+            {
+                dlg.Title = "gestures.json の場所を選ぶ";
+                dlg.Filter = "設定ファイル (*.json)|*.json|すべてのファイル (*.*)|*.*";
+                dlg.CheckFileExists = true;
+                try
+                {
+                    string dir = Path.GetDirectoryName(ConfigPath);
+                    if (!string.IsNullOrEmpty(dir) && Directory.Exists(dir)) dlg.InitialDirectory = dir;
+                }
+                catch (ArgumentException) { }
+                if (dlg.ShowDialog(this) != DialogResult.OK) return;
+
+                string oldPath = configPath, oldSource = configSource;
+                configPath = dlg.FileName;
+                configSource = Gestures.ConfigLocation.SourceSettings;
+                if (!LoadBindings())
+                {
+                    // 読めなかったので、元の場所に戻す (保存しない)
+                    configPath = oldPath;
+                    configSource = oldSource;
+                    return;
+                }
+                try
+                {
+                    Gestures.ConfigLocation.Save(AppContext.BaseDirectory, configPath);
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show(this, ex.Message, "場所を保存できませんでした (今回の起動だけ有効です)",
+                        MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                }
+            }
+        }
+
+        // 保存した場所を消して、既定 (または --config) に戻す
+        void ResetConfigLocation()
+        {
+            try
+            {
+                Gestures.ConfigLocation.Clear(AppContext.BaseDirectory);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, ex.Message, "場所の設定を消せませんでした", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return;
+            }
+            ResolveConfigLocation();
+            LoadBindings();
         }
 
         void OpenConfig()
@@ -1140,7 +1234,7 @@ namespace TouchpadViewer
                 }
 
                 Application.EnableVisualStyles();
-                Application.Run(new MainForm(startInTray));
+                Application.Run(new MainForm(startInTray, args));
             }
         }
     }
