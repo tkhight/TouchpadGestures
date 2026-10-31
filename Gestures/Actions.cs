@@ -525,8 +525,9 @@ public sealed class GestureDispatcher
     static bool Matches(GestureBinding b, string? app, string? currentApp, KeyModifiers mods)
         => (app is null || app == currentApp) && (b.Modifiers is null || b.Modifiers == mods);
 
-    // 条件が多いほど優先 (アプリ > 修飾キー)。0 = 条件なし、1 = 修飾キーだけ、2 = アプリだけ、3 = 両方
-    static int Score(GestureBinding b, string? app) => (app is not null ? 2 : 0) + (b.Modifiers is not null ? 1 : 0);
+    // 条件が多いほど優先 (修飾キー > アプリ)。0 = 条件なし、1 = アプリだけ、2 = 修飾キーだけ、3 = 両方
+    // 修飾キーを明示した割り当ては、「修飾キー不問」のアプリ別の割り当てより具体的なので、そちらを優先する
+    static int Score(GestureBinding b, string? app) => (app is not null ? 1 : 0) + (b.Modifiers is not null ? 2 : 0);
 
     bool IsActive(GestureBinding b, string? app, string? currentApp, KeyModifiers mods)
     {

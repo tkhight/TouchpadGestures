@@ -149,10 +149,12 @@ public class ModifierTests
     }
 
     [Fact]
-    public void AppBeatsModifiers_WhenBothAreIndividuallySpecific()
+    public void ModifiersBeatApp_WhenBothAreIndividuallySpecific()
     {
+        // 共通の Ctrl 割り当てと、修飾キー不問のアプリ別割り当て: Ctrl を押していれば Ctrl 側
         GestureBinding[] bs = { Bind("B", mods: KeyModifiers.Ctrl), Bind("C", app: "chrome") };
-        Assert.Equal("C", Fire(KeyModifiers.Ctrl, "chrome", bs));
+        Assert.Equal("B", Fire(KeyModifiers.Ctrl, "chrome", bs));
+        Assert.Equal("C", Fire(KeyModifiers.None, "chrome", bs));
     }
 
     [Fact]
