@@ -117,6 +117,8 @@ public static class BindingEditing
     {
         var a = e.Action;
         if (a is null) return "";
+        if (a.MoveWindow == true) return "ウィンドウをつかんで移動";
+        if (a.ResizeWindow == true) return "ウィンドウの大きさを変える";
         if (a.Click is not null && a.Hold == true)
             return (a.Hotkey is null ? "" : a.Hotkey + " + ") + "押し続ける(" + a.Click + (a.Count > 1 ? " ×" + a.Count : "") + ")";
         if (a.Click is not null)

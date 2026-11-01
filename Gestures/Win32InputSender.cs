@@ -59,6 +59,53 @@ public sealed class Win32InputSender : IInputSender
     [DllImport("user32.dll", SetLastError = true)]
     static extern uint SendInput(uint count, INPUT[] inputs, int size);
 
+    [StructLayout(LayoutKind.Sequential)]
+    struct POINT { public int X, Y; }
+
+    [StructLayout(LayoutKind.Sequential)]
+    struct RECT { public int Left, Top, Right, Bottom; }
+
+    [DllImport("user32.dll")] static extern bool GetCursorPos(out POINT p);
+    [DllImport("user32.dll")] static extern IntPtr WindowFromPoint(POINT p);
+    [DllImport("user32.dll")] static extern IntPtr GetAncestor(IntPtr hwnd, uint flags);
+    [DllImport("user32.dll")] static extern bool IsZoomed(IntPtr hwnd);
+    [DllImport("user32.dll")] static extern bool IsWindow(IntPtr hwnd);
+    [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr hwnd, out RECT r);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetClassName(IntPtr hwnd, System.Text.StringBuilder sb, int max);
+    [DllImport("user32.dll")]
+    static extern bool SetWindowPos(IntPtr hwnd, IntPtr after, int x, int y, int cx, int cy, uint flags);
+
+    const uint GA_ROOT = 2;
+    const uint SWP_NOSIZE = 0x0001, SWP_NOMOVE = 0x0002, SWP_NOZORDER = 0x0004, SWP_NOACTIVATE = 0x0010;
+
+    public long GrabWindow()
+    {
+        if (!GetCursorPos(out var pt)) return 0;
+        var h = WindowFromPoint(pt);
+        if (h == IntPtr.Zero) return 0;
+        h = GetAncestor(h, GA_ROOT);
+        if (h == IntPtr.Zero || IsZoomed(h)) return 0;     // 最大化中のウィンドウは動かせない
+        var sb = new System.Text.StringBuilder(64);
+        GetClassName(h, sb, sb.Capacity);
+        // デスクトップ・タスクバーは動かさない
+        return sb.ToString() is "Progman" or "WorkerW" or "Shell_TrayWnd" or "Shell_SecondaryTrayWnd" ? 0 : h.ToInt64();
+    }
+
+    public void MoveWindowBy(long window, int dx, int dy)
+    {
+        var h = new IntPtr(window);
+        if (!IsWindow(h) || !GetWindowRect(h, out var r)) return;
+        SetWindowPos(h, IntPtr.Zero, r.Left + dx, r.Top + dy, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+    }
+
+    public void ResizeWindowBy(long window, int dw, int dh)
+    {
+        var h = new IntPtr(window);
+        if (!IsWindow(h) || !GetWindowRect(h, out var r)) return;
+        SetWindowPos(h, IntPtr.Zero, 0, 0, Math.Max(1, r.Right - r.Left + dw), Math.Max(1, r.Bottom - r.Top + dh),
+            SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+    }
+
     public void KeyDown(ushort vk) => SendKey(vk, false);
 
     public void KeyUp(ushort vk) => SendKey(vk, true);

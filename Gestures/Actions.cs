@@ -15,6 +15,15 @@ public interface IInputSender
 
     /// <summary>マウスカーソルを、今の位置から (dx, dy) ピクセルだけ動かす。</summary>
     void MoveCursor(int dx, int dy) => throw new NotSupportedException("この送信先はカーソル移動に対応していません");
+
+    /// <summary>カーソルの下にあるウィンドウ (動かせるもの) をつかむ。つかめなければ 0。</summary>
+    long GrabWindow() => 0;
+
+    /// <summary>GrabWindow でつかんだウィンドウを、(dx, dy) ピクセルだけ動かす。</summary>
+    void MoveWindowBy(long window, int dx, int dy) { }
+
+    /// <summary>GrabWindow でつかんだウィンドウの大きさを、右下の角を引くように (dw, dh) ピクセルだけ変える。</summary>
+    void ResizeWindowBy(long window, int dw, int dh) { }
 }
 
 public enum MouseButton { Left, Right, Middle }
@@ -249,6 +258,85 @@ public sealed class HoldAction : IHoldAction
             Try(() => sender.KeyUp(k));
         }
         if (first is not null) throw first;
+    }
+}
+
+/// <summary>
+/// 発火したときにカーソルの下にあるウィンドウをつかみ、全部の指が離れるまで、指の動きに合わせてそのウィンドウを動かす
+/// (PowerToys の「つかんで移動」と同じ動き。Win を押しながらの操作は要らない)。カーソルもウィンドウと一緒に動かす。
+/// resize が true のときは、動かす代わりに、ウィンドウの右下の角を引いて大きさを変える。
+/// </summary>
+public sealed class WindowMoveAction : IHoldAction
+{
+    const long MaxHoldMs = 60_000;
+    const double PixelsPerPadWidth = 1500;
+
+    readonly double _speed;
+    readonly bool _resize;
+    bool _held;
+    long _window;
+    long _startMs;
+    (double X, double Y)? _prev;
+    int _prevCount;
+    double _remX, _remY;
+
+    public string Description { get; }
+
+    public WindowMoveAction(double speed = 1.0, bool resize = false)
+    {
+        if (speed <= 0) throw new ArgumentOutOfRangeException(nameof(speed), "speed must be > 0");
+        _speed = speed;
+        _resize = resize;
+        Description = resize ? "カーソルの下のウィンドウの大きさを変える (右下の角を引く)" : "カーソルの下のウィンドウをつかんで動かす";
+    }
+
+    public bool IsHeld => _held;
+
+    public void Execute(IInputSender sender) => throw new NotSupportedException("WindowMoveAction は Begin / Update / End で使う");
+
+    public void Begin(Frame frame, IInputSender sender)
+    {
+        if (_held) return;
+        _window = sender.GrabWindow();
+        _held = true;
+        _startMs = frame.TimeMs;
+        _prev = null;
+        _prevCount = 0;
+        _remX = _remY = 0;
+    }
+
+    public bool Update(Frame frame, IInputSender sender)
+    {
+        if (!_held) return false;
+        if (frame.TimeMs - _startMs > MaxHoldMs) return false;
+        var cs = frame.Contacts;
+        if (_window == 0 || cs.Count == 0) return true;
+
+        double cx = cs.Average(c => c.X), cy = cs.Average(c => c.Y);
+        // 指の本数が変わった瞬間は、重心が飛ぶので動かさない
+        if (_prev is { } p && _prevCount == cs.Count)
+        {
+            double dx = (cx - p.X) * PixelsPerPadWidth * _speed + _remX;
+            double dy = (cy - p.Y) * PixelsPerPadWidth * _speed + _remY;
+            int ix = (int)Math.Truncate(dx), iy = (int)Math.Truncate(dy);
+            _remX = dx - ix;
+            _remY = dy - iy;
+            if (ix != 0 || iy != 0)
+            {
+                if (_resize) sender.ResizeWindowBy(_window, ix, iy);
+                else sender.MoveWindowBy(_window, ix, iy);
+                sender.MoveCursor(ix, iy);
+            }
+        }
+        _prev = (cx, cy);
+        _prevCount = cs.Count;
+        return true;
+    }
+
+    public void End(IInputSender sender)
+    {
+        _held = false;
+        _window = 0;
     }
 }
 

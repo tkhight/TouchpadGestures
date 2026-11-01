@@ -75,6 +75,9 @@ namespace TouchpadViewer
         readonly RadioButton rbHotkey = new RadioButton();
         readonly RadioButton rbWheel = new RadioButton();
         readonly RadioButton rbClick = new RadioButton();
+        readonly RadioButton rbMove = new RadioButton();
+        readonly RadioButton rbResize = new RadioButton();
+        readonly NumericUpDown numMoveSpeed = new NumericUpDown();
         readonly ComboBox cboClick = new ComboBox();
         readonly NumericUpDown numClickCount = new NumericUpDown();
         readonly CheckBox chkHold = new CheckBox();
@@ -281,7 +284,7 @@ namespace TouchpadViewer
             flow.Controls.Add(grpLand);
 
             // 動作
-            GroupBox grpAction = new GroupBox { Text = "動作", Width = 520, Height = 196 };
+            GroupBox grpAction = new GroupBox { Text = "動作", Width = 520, Height = 262 };
             rbHotkey.Text = "キー"; rbHotkey.AutoSize = true; rbHotkey.Location = new Point(10, 26); rbHotkey.Checked = true;
             txtHotkey.Location = new Point(100, 24);
             txtHotkey.Width = 200;
@@ -325,7 +328,17 @@ namespace TouchpadViewer
             numSpeed.Minimum = 0.1M;
             numSpeed.Maximum = 10M;
             numSpeed.Value = 1M;
-            grpAction.Controls.AddRange(new Control[] { rbHotkey, txtHotkey, btnCapture, rbWheel, numWheel, chkHorizontal, wheelNote,
+            rbMove.Text = "ウィンドウ移動"; rbMove.AutoSize = true; rbMove.Location = new Point(10, 196);
+            Label moveNote = new Label { Text = "カーソルの下のウィンドウをつかみ、指を離すまで動かす。速さ", AutoSize = true, Location = new Point(122, 200) };
+            rbResize.Text = "ウィンドウの大きさ変更"; rbResize.AutoSize = true; rbResize.Location = new Point(10, 226);
+            numMoveSpeed.Location = new Point(440, 194);
+            numMoveSpeed.Width = 60;
+            numMoveSpeed.DecimalPlaces = 1;
+            numMoveSpeed.Increment = 0.1M;
+            numMoveSpeed.Minimum = 0.1M;
+            numMoveSpeed.Maximum = 10M;
+            numMoveSpeed.Value = 1M;
+            grpAction.Controls.AddRange(new Control[] { rbResize, rbMove, moveNote, numMoveSpeed, rbHotkey, txtHotkey, btnCapture, rbWheel, numWheel, chkHorizontal, wheelNote,
                 rbClick, cboClick, countLabel, numClickCount, clickNote, chkHold, chkFollow, speedLabel, numSpeed });
             flow.Controls.Add(grpAction);
 
@@ -369,6 +382,9 @@ namespace TouchpadViewer
             rbHotkey.CheckedChanged += changed;
             rbWheel.CheckedChanged += changed;
             rbClick.CheckedChanged += changed;
+            rbMove.CheckedChanged += changed;
+            rbResize.CheckedChanged += changed;
+            numMoveSpeed.ValueChanged += changed;
             cboClick.SelectedIndexChanged += changed;
             numClickCount.ValueChanged += changed;
             chkHold.CheckedChanged += changed;
@@ -714,9 +730,15 @@ namespace TouchpadViewer
 
             bool wheel = e.Action != null && e.Action.Wheel != null;
             bool click = e.Action != null && e.Action.Click != null;
+            bool move = e.Action != null && e.Action.MoveWindow == true;
             rbWheel.Checked = wheel;
             rbClick.Checked = click;
-            rbHotkey.Checked = !wheel && !click;
+            bool resize = e.Action != null && e.Action.ResizeWindow == true;
+            rbMove.Checked = move;
+            rbResize.Checked = resize;
+            rbHotkey.Checked = !wheel && !click && !move && !resize;
+            numMoveSpeed.Value = Math.Min(Math.Max((move || resize) && e.Action.Speed != null ? (decimal)e.Action.Speed.Value : 1M,
+                numMoveSpeed.Minimum), numMoveSpeed.Maximum);
             string clickName = click ? e.Action.Click.Trim().ToLowerInvariant() : "left";
             cboClick.SelectedIndex = clickName == "right" ? 1 : clickName == "middle" ? 2 : 0;
             numClickCount.Value = Math.Min(Math.Max(e.Action != null && e.Action.Count != null ? e.Action.Count.Value : 1,
@@ -814,6 +836,10 @@ namespace TouchpadViewer
 
             if (rbWheel.Checked)
                 e.Action = new ActionEntry { Wheel = (int)numWheel.Value, Horizontal = chkHorizontal.Checked ? true : (bool?)null };
+            else if (rbResize.Checked)
+                e.Action = new ActionEntry { ResizeWindow = true, Speed = numMoveSpeed.Value != 1M ? (double)numMoveSpeed.Value : (double?)null };
+            else if (rbMove.Checked)
+                e.Action = new ActionEntry { MoveWindow = true, Speed = numMoveSpeed.Value != 1M ? (double)numMoveSpeed.Value : (double?)null };
             else if (rbClick.Checked)
                 e.Action = new ActionEntry
                 {

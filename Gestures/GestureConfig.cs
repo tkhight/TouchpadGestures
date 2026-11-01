@@ -375,6 +375,32 @@ public static class GestureConfig
             errors.Add($"{label}: action が必要です");
             return null;
         }
+        if (a.MoveWindow == true || a.ResizeWindow == true)
+        {
+            if (a.MoveWindow == true && a.ResizeWindow == true)
+            {
+                errors.Add($"{label}: moveWindow と resizeWindow は一緒に指定できません");
+                return null;
+            }
+            string name = a.MoveWindow == true ? "moveWindow" : "resizeWindow";
+            if (a.Hotkey is not null || a.Wheel is not null || a.Click is not null || a.Horizontal is not null
+                || a.Count is not null || a.Hold is not null || a.Follow is not null)
+            {
+                errors.Add($"{label}: {name} は speed 以外と一緒に指定できません");
+                return null;
+            }
+            if (a.Speed <= 0)
+            {
+                errors.Add($"{label}: speed は 0 より大きい値にしてください");
+                return null;
+            }
+            return new WindowMoveAction(a.Speed ?? 1.0, a.ResizeWindow == true);
+        }
+        if (a.MoveWindow == false || a.ResizeWindow == false)
+        {
+            errors.Add($"{label}: moveWindow / resizeWindow は true のときだけ指定できます");
+            return null;
+        }
         bool hasHotkey = a.Hotkey is not null, hasWheel = a.Wheel is not null, hasClick = a.Click is not null;
         if (hasWheel && (hasHotkey || hasClick))
         {
@@ -383,7 +409,7 @@ public static class GestureConfig
         }
         if (!hasHotkey && !hasWheel && !hasClick)
         {
-            errors.Add($"{label}: action には hotkey か wheel か click のどれかを指定してください");
+            errors.Add($"{label}: action には hotkey か wheel か click か moveWindow か resizeWindow のどれかを指定してください");
             return null;
         }
         if (a.Count is not null && !hasClick) errors.Add($"{label}: count は click と一緒にだけ指定できます");
@@ -546,7 +572,7 @@ public sealed class BindingEntry
         TapAll = TapAll, MaxSpreadMs = MaxSpreadMs,
         TapSlot = TapSlot, TapCount = TapCount, MaxTapMs = MaxTapMs, MaxGapMs = MaxGapMs, MaxTapMove = MaxTapMove,
         MinDistance = MinDistance, FixedTolerance = FixedTolerance, SettleMs = SettleMs, RepeatDistance = RepeatDistance,
-        Action = Action is null ? null : new ActionEntry { Hotkey = Action.Hotkey, Wheel = Action.Wheel, Horizontal = Action.Horizontal, Click = Action.Click, Count = Action.Count, Hold = Action.Hold, Follow = Action.Follow, Speed = Action.Speed },
+        Action = Action is null ? null : new ActionEntry { Hotkey = Action.Hotkey, Wheel = Action.Wheel, Horizontal = Action.Horizontal, Click = Action.Click, Count = Action.Count, Hold = Action.Hold, Follow = Action.Follow, Speed = Action.Speed, MoveWindow = Action.MoveWindow, ResizeWindow = Action.ResizeWindow },
     };
 }
 
@@ -564,4 +590,8 @@ public sealed class ActionEntry
     public bool? Follow { get; set; }
     /// <summary>hold + follow のときの、カーソルの動く速さの倍率 (省略 = 1)。</summary>
     public double? Speed { get; set; }
+    /// <summary>true なら、カーソルの下のウィンドウをつかんで、指の動きに合わせて動かす (速さは speed)。</summary>
+    public bool? MoveWindow { get; set; }
+    /// <summary>true なら、カーソルの下のウィンドウの右下の角を引くように、指の動きに合わせて大きさを変える (速さは speed)。</summary>
+    public bool? ResizeWindow { get; set; }
 }
