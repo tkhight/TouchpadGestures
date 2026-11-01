@@ -469,7 +469,7 @@ namespace TouchpadViewer
 
         void BuildBottom()
         {
-            Panel bottom = new Panel { Dock = DockStyle.Bottom, Height = 56, Padding = new Padding(10, 8, 10, 8) };
+            Panel bottom = new Panel { Dock = DockStyle.Bottom, Height = 80, Padding = new Padding(10, 8, 10, 8) };
             Button save = new Button { Text = "保存して反映", Width = 130, Dock = DockStyle.Right };
             save.Click += delegate { Save(); };
             Button cancel = new Button { Text = "閉じる", Width = 90, Dock = DockStyle.Right };
@@ -484,7 +484,7 @@ namespace TouchpadViewer
             Label note = new Label
             {
                 Dock = DockStyle.Fill,
-                Text = "黄色の行 = 編集済み、緑の行 = 追加 (どちらも、保存するまで反映されません)\r\n赤い文字 = このままでは保存できない行 (重複など。マウスを重ねると内容が出ます)。保存すると、手書きのコメントは消えます。元のファイルは .bak に残ります。",
+                Text = "黄色の行 = 編集済み、緑の行 = 追加 (保存するまで反映されません)\r\n赤い文字 = 保存できない行 (マウスを重ねると内容が出ます)\r\n保存すると、手書きのコメントは消えます (元のファイルは .bak に残ります)",
                 TextAlign = ContentAlignment.MiddleLeft,
             };
             bottom.Controls.Add(note);
