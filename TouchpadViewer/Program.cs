@@ -1055,7 +1055,7 @@ namespace TouchpadViewer
                     "設定画面を開けません", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 return;
             }
-            using (SettingsForm form = new SettingsForm(ConfigPath, entries))
+            using (SettingsForm form = new SettingsForm(ConfigPath, entries, AppContext.BaseDirectory))
             {
                 if (form.ShowDialog(this) == DialogResult.OK) LoadBindings();
             }

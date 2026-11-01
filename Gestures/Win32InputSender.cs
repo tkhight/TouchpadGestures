@@ -119,6 +119,20 @@ public sealed class Win32InputSender : IInputSender
             SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS);
     }
 
+    public void Run(string path, string? args)
+    {
+        string full = Environment.ExpandEnvironmentVariables(path);
+        var psi = new System.Diagnostics.ProcessStartInfo(full) { UseShellExecute = true };
+        if (!string.IsNullOrWhiteSpace(args)) psi.Arguments = Environment.ExpandEnvironmentVariables(args);
+        try
+        {
+            string? dir = System.IO.Path.GetDirectoryName(full);
+            if (!string.IsNullOrEmpty(dir) && System.IO.Directory.Exists(dir)) psi.WorkingDirectory = dir;
+        }
+        catch (ArgumentException) { }
+        System.Diagnostics.Process.Start(psi)?.Dispose();
+    }
+
     public void KeyDown(ushort vk) => SendKey(vk, false);
 
     public void KeyUp(ushort vk) => SendKey(vk, true);

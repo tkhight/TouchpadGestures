@@ -117,6 +117,7 @@ public static class BindingEditing
     {
         var a = e.Action;
         if (a is null) return "";
+        if (a.Run is not null) return "起動: " + a.Run + (string.IsNullOrWhiteSpace(a.Args) ? "" : " " + a.Args);
         if (a.MoveWindow == true) return "ウィンドウをつかんで移動";
         if (a.ResizeWindow == true) return "ウィンドウの大きさを変える";
         if (a.Click is not null && a.Hold == true)

@@ -24,6 +24,9 @@ public interface IInputSender
 
     /// <summary>GrabWindow でつかんだウィンドウの大きさを、右下の角を引くように (dw, dh) ピクセルだけ変える。</summary>
     void ResizeWindowBy(long window, int dw, int dh) { }
+
+    /// <summary>アプリ (や文書・URL) を起動する。環境変数 (%USERPROFILE% など) は展開する。</summary>
+    void Run(string path, string? args) => throw new NotSupportedException("この送信先はアプリの起動に対応していません");
 }
 
 public enum MouseButton { Left, Right, Middle }
@@ -365,6 +368,25 @@ public sealed class WindowMoveAction : IHoldAction
             _window = 0;
         }
     }
+}
+
+/// <summary>指定したアプリ (や文書・URL) を起動する。すでに動いていても、もう 1 つ起動する。</summary>
+public sealed class RunAction : IGestureAction
+{
+    readonly string _path;
+    readonly string? _args;
+
+    public string Description { get; }
+
+    public RunAction(string path, string? args = null)
+    {
+        if (string.IsNullOrWhiteSpace(path)) throw new ArgumentException("path must not be empty", nameof(path));
+        _path = path.Trim();
+        _args = string.IsNullOrWhiteSpace(args) ? null : args;
+        Description = "起動: " + _path + (_args is null ? "" : " " + _args);
+    }
+
+    public void Execute(IInputSender sender) => sender.Run(_path, _args);
 }
 
 /// <summary>マウスホイールを回す。notches は 1 ノッチ = 120。正は上/右、負は下/左。</summary>

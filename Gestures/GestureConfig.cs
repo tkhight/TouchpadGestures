@@ -375,6 +375,27 @@ public static class GestureConfig
             errors.Add($"{label}: action が必要です");
             return null;
         }
+        if (a.Args is not null && a.Run is null)
+        {
+            errors.Add($"{label}: args は run と一緒にだけ指定できます");
+            return null;
+        }
+        if (a.Run is not null)
+        {
+            if (a.Hotkey is not null || a.Wheel is not null || a.Click is not null || a.Horizontal is not null
+                || a.Count is not null || a.Hold is not null || a.Follow is not null || a.Speed is not null
+                || a.MoveWindow is not null || a.ResizeWindow is not null)
+            {
+                errors.Add($"{label}: run は args 以外と一緒に指定できません");
+                return null;
+            }
+            if (string.IsNullOrWhiteSpace(a.Run))
+            {
+                errors.Add($"{label}: run には、起動するアプリのパスを指定してください");
+                return null;
+            }
+            return new RunAction(a.Run, a.Args);
+        }
         if (a.MoveWindow == true || a.ResizeWindow == true)
         {
             if (a.MoveWindow == true && a.ResizeWindow == true)
@@ -409,7 +430,7 @@ public static class GestureConfig
         }
         if (!hasHotkey && !hasWheel && !hasClick)
         {
-            errors.Add($"{label}: action には hotkey か wheel か click か moveWindow か resizeWindow のどれかを指定してください");
+            errors.Add($"{label}: action には hotkey か wheel か click か moveWindow か resizeWindow か run のどれかを指定してください");
             return null;
         }
         if (a.Count is not null && !hasClick) errors.Add($"{label}: count は click と一緒にだけ指定できます");
@@ -572,7 +593,7 @@ public sealed class BindingEntry
         TapAll = TapAll, MaxSpreadMs = MaxSpreadMs,
         TapSlot = TapSlot, TapCount = TapCount, MaxTapMs = MaxTapMs, MaxGapMs = MaxGapMs, MaxTapMove = MaxTapMove,
         MinDistance = MinDistance, FixedTolerance = FixedTolerance, SettleMs = SettleMs, RepeatDistance = RepeatDistance,
-        Action = Action is null ? null : new ActionEntry { Hotkey = Action.Hotkey, Wheel = Action.Wheel, Horizontal = Action.Horizontal, Click = Action.Click, Count = Action.Count, Hold = Action.Hold, Follow = Action.Follow, Speed = Action.Speed, MoveWindow = Action.MoveWindow, ResizeWindow = Action.ResizeWindow },
+        Action = Action is null ? null : new ActionEntry { Hotkey = Action.Hotkey, Wheel = Action.Wheel, Horizontal = Action.Horizontal, Click = Action.Click, Count = Action.Count, Hold = Action.Hold, Follow = Action.Follow, Speed = Action.Speed, MoveWindow = Action.MoveWindow, ResizeWindow = Action.ResizeWindow, Run = Action.Run, Args = Action.Args },
     };
 }
 
@@ -594,4 +615,8 @@ public sealed class ActionEntry
     public bool? MoveWindow { get; set; }
     /// <summary>true なら、カーソルの下のウィンドウの右下の角を引くように、指の動きに合わせて大きさを変える (速さは speed)。</summary>
     public bool? ResizeWindow { get; set; }
+    /// <summary>起動するアプリ (や文書・URL) のパス。%USERPROFILE% のような環境変数も使える。</summary>
+    public string? Run { get; set; }
+    /// <summary>run に渡す引数 (省略可)。</summary>
+    public string? Args { get; set; }
 }

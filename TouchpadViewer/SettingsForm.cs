@@ -77,6 +77,10 @@ namespace TouchpadViewer
         readonly RadioButton rbClick = new RadioButton();
         readonly RadioButton rbMove = new RadioButton();
         readonly RadioButton rbResize = new RadioButton();
+        readonly RadioButton rbRun = new RadioButton();
+        readonly TextBox txtRun = new TextBox();
+        readonly TextBox txtArgs = new TextBox();
+        readonly Button btnBrowseRun = new Button();
         readonly NumericUpDown numMoveSpeed = new NumericUpDown();
         readonly ComboBox cboClick = new ComboBox();
         readonly NumericUpDown numClickCount = new NumericUpDown();
@@ -91,10 +95,24 @@ namespace TouchpadViewer
         readonly Label lblError = new Label();
         readonly List<Threshold> thresholds = new List<Threshold>();
 
-        public SettingsForm(string path, List<BindingEntry> source)
+        readonly string stateDir;
+
+        // 開いたときの割り当て (編集前) と、編集用の複製との対応。「閉じる」で並びだけを保存するのに使う
+        readonly List<BindingEntry> original;
+        readonly Dictionary<BindingEntry, BindingEntry> originalOf = new Dictionary<BindingEntry, BindingEntry>();
+
+        /// <param name="stateDir">最後に選んだ割り当てを覚えておく場所 (exe のフォルダ)。null なら覚えない。</param>
+        public SettingsForm(string path, List<BindingEntry> source, string stateDir = null)
         {
             this.path = path;
-            entries = source.Select(e => e.Clone()).ToList();
+            this.stateDir = stateDir;
+            original = source.ToList();
+            entries = original.Select(e => e.Clone()).ToList();
+            for (int i = 0; i < original.Count; i++)
+            {
+                originalOf[entries[i]] = original[i];
+                baseline[entries[i]] = GestureConfig.ToJson(new[] { entries[i] });
+            }
 
             Text = "ジェスチャーの設定";
             Font = SystemFonts.MessageBoxFont;
@@ -108,8 +126,30 @@ namespace TouchpadViewer
             BuildEditor();
             BuildBottom();
             RefillFilter(AllApps);
-            RefillList(null);
+            RefillList(RememberedEntry());
             UpdateEditorEnabled();
+        }
+
+        // ---- 最後に選んだ割り当てを覚える ----
+
+        static string KeyOf(BindingEntry e)
+        {
+            return (AppOf(e) ?? "") + "|" + BindingEditing.ModifiersLabel(e) + BindingEditing.DisplayName(e);
+        }
+
+        BindingEntry RememberedEntry()
+        {
+            if (stateDir == null) return null;
+            int? i = SelectionMemory.Find(stateDir, path, entries.Select(KeyOf).ToList());
+            return i == null ? null : entries[i.Value];
+        }
+
+        protected override void OnFormClosing(FormClosingEventArgs e)
+        {
+            base.OnFormClosing(e);
+            if (stateDir == null || cur == null) return;
+            int i = entries.IndexOf(cur);
+            if (i >= 0) SelectionMemory.Save(stateDir, path, i, KeyOf(cur));
         }
 
         // ---- 画面の組み立て ----
@@ -284,7 +324,7 @@ namespace TouchpadViewer
             flow.Controls.Add(grpLand);
 
             // 動作
-            GroupBox grpAction = new GroupBox { Text = "動作", Width = 520, Height = 262 };
+            GroupBox grpAction = new GroupBox { Text = "動作", Width = 520, Height = 326 };
             rbHotkey.Text = "キー"; rbHotkey.AutoSize = true; rbHotkey.Location = new Point(10, 26); rbHotkey.Checked = true;
             txtHotkey.Location = new Point(100, 24);
             txtHotkey.Width = 200;
@@ -330,6 +370,19 @@ namespace TouchpadViewer
             numSpeed.Value = 1M;
             rbMove.Text = "ウィンドウ移動"; rbMove.AutoSize = true; rbMove.Location = new Point(10, 196);
             Label moveNote = new Label { Text = "カーソルの下のウィンドウをつかみ、指を離すまで動かす。速さ", AutoSize = true, Location = new Point(122, 200) };
+            rbRun.Text = "アプリ起動"; rbRun.AutoSize = true; rbRun.Location = new Point(10, 260);
+            txtRun.Location = new Point(100, 258);
+            txtRun.Width = 320;
+            btnBrowseRun.Text = "参照...";
+            btnBrowseRun.Location = new Point(428, 256);
+            btnBrowseRun.Width = 70;
+            btnBrowseRun.Click += delegate
+            {
+                using (OpenFileDialog dlg = new OpenFileDialog { Title = "起動するアプリを選ぶ", Filter = "実行ファイル (*.exe;*.bat;*.cmd;*.lnk)|*.exe;*.bat;*.cmd;*.lnk|すべてのファイル (*.*)|*.*" })
+                    if (dlg.ShowDialog(this) == DialogResult.OK) { txtRun.Text = dlg.FileName; rbRun.Checked = true; }
+            };
+            txtArgs.Location = new Point(140, 294);
+            txtArgs.Width = 358;
             rbResize.Text = "ウィンドウの大きさ変更"; rbResize.AutoSize = true; rbResize.Location = new Point(10, 226);
             numMoveSpeed.Location = new Point(440, 194);
             numMoveSpeed.Width = 60;
@@ -338,7 +391,7 @@ namespace TouchpadViewer
             numMoveSpeed.Minimum = 0.1M;
             numMoveSpeed.Maximum = 10M;
             numMoveSpeed.Value = 1M;
-            grpAction.Controls.AddRange(new Control[] { rbResize, rbMove, moveNote, numMoveSpeed, rbHotkey, txtHotkey, btnCapture, rbWheel, numWheel, chkHorizontal, wheelNote,
+            grpAction.Controls.AddRange(new Control[] { rbRun, txtRun, btnBrowseRun, new Label { Text = "引数", AutoSize = true, Location = new Point(100, 296) }, txtArgs, rbResize, rbMove, moveNote, numMoveSpeed, rbHotkey, txtHotkey, btnCapture, rbWheel, numWheel, chkHorizontal, wheelNote,
                 rbClick, cboClick, countLabel, numClickCount, clickNote, chkHold, chkFollow, speedLabel, numSpeed });
             flow.Controls.Add(grpAction);
 
@@ -384,6 +437,9 @@ namespace TouchpadViewer
             rbClick.CheckedChanged += changed;
             rbMove.CheckedChanged += changed;
             rbResize.CheckedChanged += changed;
+            rbRun.CheckedChanged += changed;
+            txtRun.TextChanged += changed;
+            txtArgs.TextChanged += changed;
             numMoveSpeed.ValueChanged += changed;
             cboClick.SelectedIndexChanged += changed;
             numClickCount.ValueChanged += changed;
@@ -401,11 +457,16 @@ namespace TouchpadViewer
             Button save = new Button { Text = "保存して反映", Width = 130, Dock = DockStyle.Right };
             save.Click += delegate { Save(); };
             Button cancel = new Button { Text = "閉じる", Width = 90, Dock = DockStyle.Right };
-            cancel.Click += delegate { DialogResult = DialogResult.Cancel; Close(); };
+            cancel.Click += delegate
+            {
+                // 閉じるときも、並びの変更だけは保存する (中身の編集は捨てる)
+                DialogResult = SaveOrderOnly() ? DialogResult.OK : DialogResult.Cancel;
+                Close();
+            };
             Label note = new Label
             {
                 Dock = DockStyle.Fill,
-                Text = "保存すると、手書きのコメントは消えます。元のファイルは .bak に残ります。",
+                Text = "黄色の行 = 編集済み、緑の行 = 追加 (どちらも、保存するまで反映されません)\r\n保存すると、手書きのコメントは消えます。元のファイルは .bak に残ります。",
                 TextAlign = ContentAlignment.MiddleLeft,
             };
             bottom.Controls.Add(note);
@@ -530,11 +591,26 @@ namespace TouchpadViewer
             else OnListSelected();
         }
 
-        static void SetRow(ListViewItem item, BindingEntry e)
+        // 開いたときの中身 (編集前) の JSON。編集して、まだ保存していない行に色を付けるのに使う
+        readonly Dictionary<BindingEntry, string> baseline = new Dictionary<BindingEntry, string>();
+
+        static readonly Color EditedBack = Color.FromArgb(255, 245, 190);   // 編集済み (黄)
+        static readonly Color AddedBack = Color.FromArgb(205, 238, 205);    // 追加 (緑)
+
+        Color RowBack(BindingEntry e)
+        {
+            string was;
+            if (!baseline.TryGetValue(e, out was)) return AddedBack;
+            return GestureConfig.ToJson(new[] { e }) == was ? SystemColors.Window : EditedBack;
+        }
+
+        void SetRow(ListViewItem item, BindingEntry e)
         {
             item.SubItems[0].Text = AppOf(e) ?? GlobalOnly;
             bool off = e.Enabled == false;
             item.SubItems[1].Text = (off ? "(無効) " : "") + BindingEditing.ModifiersLabel(e) + BindingEditing.DisplayName(e);
+            item.UseItemStyleForSubItems = true;
+            item.BackColor = RowBack(e);
             item.ForeColor = off ? SystemColors.GrayText : SystemColors.WindowText;
             item.SubItems[2].Text = BindingEditing.DescribeAction(e);
         }
@@ -736,7 +812,11 @@ namespace TouchpadViewer
             bool resize = e.Action != null && e.Action.ResizeWindow == true;
             rbMove.Checked = move;
             rbResize.Checked = resize;
-            rbHotkey.Checked = !wheel && !click && !move && !resize;
+            bool run = e.Action != null && e.Action.Run != null;
+            rbRun.Checked = run;
+            txtRun.Text = run ? e.Action.Run : "";
+            txtArgs.Text = run ? e.Action.Args ?? "" : "";
+            rbHotkey.Checked = !wheel && !click && !move && !resize && !run;
             numMoveSpeed.Value = Math.Min(Math.Max((move || resize) && e.Action.Speed != null ? (decimal)e.Action.Speed.Value : 1M,
                 numMoveSpeed.Minimum), numMoveSpeed.Maximum);
             string clickName = click ? e.Action.Click.Trim().ToLowerInvariant() : "left";
@@ -836,6 +916,8 @@ namespace TouchpadViewer
 
             if (rbWheel.Checked)
                 e.Action = new ActionEntry { Wheel = (int)numWheel.Value, Horizontal = chkHorizontal.Checked ? true : (bool?)null };
+            else if (rbRun.Checked)
+                e.Action = new ActionEntry { Run = txtRun.Text.Trim(), Args = NullIfEmpty(txtArgs.Text) };
             else if (rbResize.Checked)
                 e.Action = new ActionEntry { ResizeWindow = true, Speed = numMoveSpeed.Value != 1M ? (double)numMoveSpeed.Value : (double?)null };
             else if (rbMove.Checked)
@@ -952,6 +1034,29 @@ namespace TouchpadViewer
                 return;
             }
 
+            if (!WriteEntries(entries)) return;
+            DialogResult = DialogResult.OK;
+            Close();
+        }
+
+        // 追加・削除をしていなくて、並びだけが変わっているときに、編集前の中身のまま、並びだけを保存する。保存したら true
+        bool SaveOrderOnly()
+        {
+            if (entries.Count != original.Count) return false;
+            List<BindingEntry> ordered = new List<BindingEntry>();
+            foreach (BindingEntry e in entries)
+            {
+                BindingEntry o;
+                if (!originalOf.TryGetValue(e, out o)) return false;
+                ordered.Add(o);
+            }
+            if (ordered.SequenceEqual(original)) return false;
+            return WriteEntries(ordered);
+        }
+
+        // 設定ファイルに書き出す。手書きのコメントが消える場合は確認し、元のファイルは .bak に残す。書けたら true
+        bool WriteEntries(List<BindingEntry> list)
+        {
             try
             {
                 string existing = File.Exists(path) ? File.ReadAllText(path, Encoding.UTF8) : null;
@@ -961,19 +1066,18 @@ namespace TouchpadViewer
                         "今の設定ファイルには手書きのコメントがあります。保存するとコメントは消えます。\r\n" +
                         "元のファイルは " + Path.GetFileName(path) + ".bak に残します。続けますか?",
                         "保存の確認", MessageBoxButtons.OKCancel, MessageBoxIcon.Question);
-                    if (r != DialogResult.OK) return;
+                    if (r != DialogResult.OK) return false;
                 }
                 if (existing != null) File.Copy(path, path + ".bak", true);
-                File.WriteAllText(path, GestureConfig.ToJson(entries), new UTF8Encoding(false));
+                File.WriteAllText(path, GestureConfig.ToJson(list), new UTF8Encoding(false));
             }
             catch (Exception ex)
             {
                 MessageBox.Show(this, path + "\r\n\r\n" + ex.Message, "保存に失敗しました",
                     MessageBoxButtons.OK, MessageBoxIcon.Error);
-                return;
+                return false;
             }
-            DialogResult = DialogResult.OK;
-            Close();
+            return true;
         }
     }
 }
