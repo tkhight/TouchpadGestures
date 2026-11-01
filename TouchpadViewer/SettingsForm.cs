@@ -49,6 +49,7 @@ namespace TouchpadViewer
         readonly ComboBox cboApp = new ComboBox();
         readonly NumericUpDown numFingers = new NumericUpDown();
         readonly CheckBox chkEnabled = new CheckBox();
+        readonly CheckBox chkProtected = new CheckBox();
         readonly CheckBox chkUseMods = new CheckBox();
         readonly CheckBox chkCtrl = new CheckBox();
         readonly CheckBox chkAlt = new CheckBox();
@@ -241,11 +242,15 @@ namespace TouchpadViewer
             numFingers.Maximum = 10;
             numFingers.Value = 3;
             basic.Controls.Add(numFingers);
-            chkEnabled.Text = "有効 (オフにすると、この割り当てだけ一時的に無効)";
+            chkEnabled.Text = "有効 (オフで一時的に無効)";
             chkEnabled.AutoSize = true;
             chkEnabled.Checked = true;
             chkEnabled.Location = new Point(170, 70);
             basic.Controls.Add(chkEnabled);
+            chkProtected.Text = "保護 (削除できない)";
+            chkProtected.AutoSize = true;
+            chkProtected.Location = new Point(340, 70);
+            basic.Controls.Add(chkProtected);
 
             basic.Controls.Add(new Label { Text = "種類", AutoSize = true, Location = new Point(0, 102) });
             rbSwipe.Text = "スワイプ"; rbSwipe.AutoSize = true; rbSwipe.Location = new Point(90, 100);
@@ -332,7 +337,7 @@ namespace TouchpadViewer
             flow.Controls.Add(grpLand);
 
             // 動作
-            GroupBox grpAction = new GroupBox { Text = "動作", Width = 520, Height = 326 };
+            GroupBox grpAction = new GroupBox { Text = "動作", Width = 520, Height = 358 };
             rbHotkey.Text = "キー"; rbHotkey.AutoSize = true; rbHotkey.Location = new Point(10, 26); rbHotkey.Checked = true;
             txtHotkey.Location = new Point(100, 24);
             txtHotkey.Width = 200;
@@ -377,29 +382,31 @@ namespace TouchpadViewer
             numSpeed.Maximum = 10M;
             numSpeed.Value = 1M;
             rbMove.Text = "ウィンドウ移動"; rbMove.AutoSize = true; rbMove.Location = new Point(10, 196);
-            Label moveNote = new Label { Text = "カーソルの下のウィンドウをつかみ、指を離すまで動かす。速さ", AutoSize = true, Location = new Point(122, 200) };
-            rbRun.Text = "アプリ起動"; rbRun.AutoSize = true; rbRun.Location = new Point(10, 260);
-            txtRun.Location = new Point(100, 258);
+            Label moveNote = new Label { Text = "カーソルの下のウィンドウをつかみ、指を離すまで動かす", AutoSize = true, Location = new Point(122, 198) };
+            Label resizeNote = new Label { Text = "右下の角を引くように、指の動きで大きさを変える", AutoSize = true, Location = new Point(176, 228) };
+            Label moveSpeedLabel = new Label { Text = "└ 移動・大きさ変更 共通の速さ", AutoSize = true, Location = new Point(28, 258) };
+            rbRun.Text = "アプリ起動"; rbRun.AutoSize = true; rbRun.Location = new Point(10, 292);
+            txtRun.Location = new Point(100, 290);
             txtRun.Width = 320;
             btnBrowseRun.Text = "参照...";
-            btnBrowseRun.Location = new Point(428, 256);
+            btnBrowseRun.Location = new Point(428, 288);
             btnBrowseRun.Width = 70;
             btnBrowseRun.Click += delegate
             {
                 using (OpenFileDialog dlg = new OpenFileDialog { Title = "起動するアプリを選ぶ", Filter = "実行ファイル (*.exe;*.bat;*.cmd;*.lnk)|*.exe;*.bat;*.cmd;*.lnk|すべてのファイル (*.*)|*.*" })
                     if (dlg.ShowDialog(this) == DialogResult.OK) { txtRun.Text = dlg.FileName; rbRun.Checked = true; }
             };
-            txtArgs.Location = new Point(140, 294);
+            txtArgs.Location = new Point(140, 326);
             txtArgs.Width = 358;
             rbResize.Text = "ウィンドウの大きさ変更"; rbResize.AutoSize = true; rbResize.Location = new Point(10, 226);
-            numMoveSpeed.Location = new Point(440, 194);
+            numMoveSpeed.Location = new Point(220, 254);
             numMoveSpeed.Width = 60;
             numMoveSpeed.DecimalPlaces = 1;
             numMoveSpeed.Increment = 0.1M;
             numMoveSpeed.Minimum = 0.1M;
             numMoveSpeed.Maximum = 10M;
             numMoveSpeed.Value = 1M;
-            grpAction.Controls.AddRange(new Control[] { rbRun, txtRun, btnBrowseRun, new Label { Text = "引数", AutoSize = true, Location = new Point(100, 296) }, txtArgs, rbResize, rbMove, moveNote, numMoveSpeed, rbHotkey, txtHotkey, btnCapture, rbWheel, numWheel, chkHorizontal, wheelNote,
+            grpAction.Controls.AddRange(new Control[] { rbRun, txtRun, btnBrowseRun, new Label { Text = "引数", AutoSize = true, Location = new Point(100, 328) }, txtArgs, rbResize, resizeNote, moveSpeedLabel, rbMove, moveNote, numMoveSpeed, rbHotkey, txtHotkey, btnCapture, rbWheel, numWheel, chkHorizontal, wheelNote,
                 rbClick, cboClick, countLabel, numClickCount, clickNote, chkHold, chkFollow, speedLabel, numSpeed });
             flow.Controls.Add(grpAction);
 
@@ -425,6 +432,7 @@ namespace TouchpadViewer
             cboApp.Leave += delegate { if (!loading) { RefillFilter(SelectedFilter()); RefillList(cur); } };
             cboApp.DropDown += delegate { RefillAppChoices(); };
             chkEnabled.CheckedChanged += changed;
+            chkProtected.CheckedChanged += changed;
             chkUseMods.CheckedChanged += delegate { UpdateModsEnabled(); if (!loading && cur != null) Apply(); };
             chkCtrl.CheckedChanged += changed;
             chkAlt.CheckedChanged += changed;
@@ -620,7 +628,7 @@ namespace TouchpadViewer
         {
             item.SubItems[0].Text = AppOf(e) ?? GlobalOnly;
             bool off = e.Enabled == false;
-            item.SubItems[1].Text = (off ? "(無効) " : "") + BindingEditing.ModifiersLabel(e) + BindingEditing.DisplayName(e);
+            item.SubItems[1].Text = (e.Protected == true ? "[保護] " : "") + (off ? "(無効) " : "") + BindingEditing.ModifiersLabel(e) + BindingEditing.DisplayName(e);
             item.UseItemStyleForSubItems = true;
             item.BackColor = RowBack(e);
             item.ForeColor = off ? SystemColors.GrayText : SystemColors.WindowText;
@@ -672,6 +680,7 @@ namespace TouchpadViewer
             {
                 e = cur.Clone();
                 e.Name = string.IsNullOrWhiteSpace(cur.Name) ? null : cur.Name + " (コピー)";
+                e.Protected = null;   // 複製は、保護を引き継がない (消せない複製が増えないように)
             }
             else
             {
@@ -704,6 +713,14 @@ namespace TouchpadViewer
         void DeleteEntry()
         {
             if (cur == null) return;
+            if (cur.Protected == true)
+            {
+                MessageBox.Show(this,
+                    "「" + BindingEditing.ModifiersLabel(cur) + BindingEditing.DisplayName(cur) + "」は保護されているため、削除できません。\r\n" +
+                    "削除するには、編集欄の「保護」のチェックを外してください。",
+                    "削除できません", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
             int idx = entries.IndexOf(cur);
             entries.Remove(cur);
             BindingEntry next = entries.Count == 0 ? null : entries[Math.Min(idx, entries.Count - 1)];
@@ -793,6 +810,7 @@ namespace TouchpadViewer
             txtName.Text = e.Name ?? "";
             cboApp.Text = e.App ?? "";
             chkEnabled.Checked = e.Enabled != false;
+            chkProtected.Checked = e.Protected == true;
             KeyModifiers? mods = null;
             try { mods = KeyModifierNames.ParseOrNull(e.Modifiers); }
             catch (FormatException) { }
@@ -855,7 +873,8 @@ namespace TouchpadViewer
                 (int)numClickCount.Minimum), (int)numClickCount.Maximum);
             chkHold.Checked = e.Action != null && e.Action.Hold == true;
             chkFollow.Checked = e.Action == null || e.Action.Follow != false;
-            numSpeed.Value = Math.Min(Math.Max(e.Action != null && e.Action.Speed != null ? (decimal)e.Action.Speed.Value : 1M,
+            // クリックの速さは、クリックの割り当てのときだけ読む (移動・大きさ変更の速さが、こちらにも出てしまわないように)
+            numSpeed.Value = Math.Min(Math.Max(click && e.Action.Speed != null ? (decimal)e.Action.Speed.Value : 1M,
                 numSpeed.Minimum), numSpeed.Maximum);
             txtHotkey.Text = e.Action != null ? e.Action.Hotkey ?? "" : "";
             numWheel.Value = Math.Min(Math.Max(e.Action != null && e.Action.Wheel != null ? e.Action.Wheel.Value : 1,
@@ -889,6 +908,7 @@ namespace TouchpadViewer
             e.Name = NullIfEmpty(txtName.Text);
             e.App = NullIfEmpty(cboApp.Text);
             e.Enabled = chkEnabled.Checked ? (bool?)null : false;
+            e.Protected = chkProtected.Checked ? true : (bool?)null;
             if (chkUseMods.Checked)
             {
                 KeyModifiers m = KeyModifiers.None;

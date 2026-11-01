@@ -590,6 +590,8 @@ public sealed class BindingEntry
     public string? Modifiers { get; set; }
     /// <summary>false なら、この割り当ては無効 (内容の検証だけして、判定には使わない)。省略 = 有効。</summary>
     public bool? Enabled { get; set; }
+    /// <summary>true なら、設定画面で削除できない (編集と複製はできる)。誤って消さないための印で、判定には関係しない。省略 = 保護しない。</summary>
+    public bool? Protected { get; set; }
     public int? Fingers { get; set; }
     public int? Slot { get; set; }
     public string? Direction { get; set; }
@@ -618,7 +620,7 @@ public sealed class BindingEntry
 
     public BindingEntry Clone() => new()
     {
-        Name = Name, App = App, Modifiers = Modifiers, Enabled = Enabled, Fingers = Fingers, Slot = Slot, Direction = Direction,
+        Name = Name, App = App, Modifiers = Modifiers, Enabled = Enabled, Protected = Protected, Fingers = Fingers, Slot = Slot, Direction = Direction,
         Motions = Motions is null ? null : new List<string?>(Motions),
         Pinch = Pinch, PinchDistance = PinchDistance, CentroidTolerance = CentroidTolerance,
         LandOrder = LandOrder is null ? null : new List<int>(LandOrder), LandMinGapMs = LandMinGapMs, LandMaxGapMs = LandMaxGapMs, LandMaxMove = LandMaxMove,
