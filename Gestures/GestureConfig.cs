@@ -47,6 +47,8 @@ public static class GestureConfig
           //   ちょうどその組み合わせのときだけ。"none" = どの修飾キーも押していないとき。省略 = 押していても押していなくても有効
           //   同じジェスチャーに修飾キー付きと省略のものがあれば、押している修飾キーに合う付きのほうが優先される
           //   例: { "modifiers": "Ctrl", "fingers": 3, "slot": 0, "direction": "Left", "action": { ... } }
+          // cooldownMs を付けると、その割り当てが動作を実行したあと、その時間 (ms) は同じ割り当ての次の発火を受け付けない (省略 = 抑制しない)
+          //   例: { "fingers": 3, "slot": 0, "direction": "Left", "cooldownMs": 500, "action": { ... } }
           // "enabled": false を付けると、その割り当てだけを一時的に無効にできる (省略 = 有効)
           // app を付けると、そのアプリ (プロセス名。"chrome" / "Code.exe" など) が前面のときだけ有効になる。
           //   同じジェスチャーが app なしにもあるときは、app 付きが優先される。プロセス名は画面のログに [ ] で出る
@@ -309,6 +311,7 @@ public static class GestureConfig
             if (b.FixedTolerance < 0) errors.Add($"{label}: fixedTolerance は 0 以上にしてください");
             if (b.SettleMs < 0) errors.Add($"{label}: settleMs は 0 以上にしてください");
             if (b.RepeatDistance <= 0) errors.Add($"{label}: repeatDistance は 0 より大きい値にしてください");
+            if (b.CooldownMs < 0) errors.Add($"{label}: cooldownMs は 0 以上にしてください");
 
             var action = ParseAction(b.Action, label, errors);
 
@@ -393,7 +396,7 @@ public static class GestureConfig
                 spec = swipe;
             }
 
-            result.Add(new GestureBinding(spec, action!, app, mods));
+            result.Add(new GestureBinding(spec, action!, app, mods, b.CooldownMs ?? 0));
         }
 
         if (errors.Count > 0) throw new GestureConfigException(errors);
@@ -592,6 +595,8 @@ public sealed class BindingEntry
     public bool? Enabled { get; set; }
     /// <summary>true なら、設定画面で削除できない (編集と複製はできる)。誤って消さないための印で、判定には関係しない。省略 = 保護しない。</summary>
     public bool? Protected { get; set; }
+    /// <summary>この割り当てが動作を実行したあと、この時間 (ms) は、同じ割り当ての次の発火を受け付けない。省略 = 0 (抑制しない)。</summary>
+    public long? CooldownMs { get; set; }
     public int? Fingers { get; set; }
     public int? Slot { get; set; }
     public string? Direction { get; set; }
@@ -620,7 +625,7 @@ public sealed class BindingEntry
 
     public BindingEntry Clone() => new()
     {
-        Name = Name, App = App, Modifiers = Modifiers, Enabled = Enabled, Protected = Protected, Fingers = Fingers, Slot = Slot, Direction = Direction,
+        Name = Name, App = App, Modifiers = Modifiers, Enabled = Enabled, Protected = Protected, CooldownMs = CooldownMs, Fingers = Fingers, Slot = Slot, Direction = Direction,
         Motions = Motions is null ? null : new List<string?>(Motions),
         Pinch = Pinch, PinchDistance = PinchDistance, CentroidTolerance = CentroidTolerance,
         LandOrder = LandOrder is null ? null : new List<int>(LandOrder), LandMinGapMs = LandMinGapMs, LandMaxGapMs = LandMaxGapMs, LandMaxMove = LandMaxMove,

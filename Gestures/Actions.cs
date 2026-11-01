@@ -468,8 +468,9 @@ public static class AppNames
 /// 値があれば、そのアプリ (プロセス名) が前面のときだけ有効で、同じジェスチャーの App なしの割り当てより優先される。
 /// Modifiers が null ならどの修飾キーの状態でも有効。値があれば、その修飾キーが「ちょうど」押されているときだけ有効
 /// (KeyModifiers.None は「どれも押していない」)。同じジェスチャーなら、条件の多い割り当てが優先される。
+/// CooldownMs が 0 より大きければ、この割り当てが動作を実行してから、その時間 (ms) は、同じ割り当ての次の発火を捨てる。
 /// </summary>
-public sealed record GestureBinding(IGestureSpec Spec, IGestureAction Action, string? App = null, KeyModifiers? Modifiers = null)
+public sealed record GestureBinding(IGestureSpec Spec, IGestureAction Action, string? App = null, KeyModifiers? Modifiers = null, long CooldownMs = 0)
 {
     /// <summary>スワイプの定義のとき。それ以外は null。</summary>
     public SlotSwipeSpec? Swipe => Spec as SlotSwipeSpec;
@@ -485,6 +486,8 @@ public sealed record GestureBinding(IGestureSpec Spec, IGestureAction Action, st
 public sealed class GestureDispatcher
 {
     readonly List<(GestureBinding Binding, string? App, IGestureRecognizer Recognizer)> _entries;
+    // 割り当てごとに、最後に動作を実行した時刻 (フレームの時刻)。未実行は long.MinValue
+    readonly long[] _lastFiredMs;
     readonly IInputSender _sender;
     readonly Func<string?>? _foregroundApp;
     readonly Func<KeyModifiers>? _modifierState;
@@ -528,6 +531,8 @@ public sealed class GestureDispatcher
                 throw new ArgumentException("同じ定義に複数の動作が割り当てられています: " + b.Spec.Name);
             _entries.Add((b, app, GestureEngine.Create(b.Spec)));
         }
+        _lastFiredMs = new long[_entries.Count];
+        Array.Fill(_lastFiredMs, long.MinValue);
         _sender = sender;
         _foregroundApp = foregroundApp;
         _modifierState = modifierState;
@@ -543,9 +548,12 @@ public sealed class GestureDispatcher
     {
         UpdateHolds(frame, execute);
 
-        var hits = new List<(GestureBinding Binding, string? App, int Count)>();
-        foreach (var (b, app, r) in _entries)
-            if (r.Feed(frame)) hits.Add((b, app, r.LastFireCount));
+        var hits = new List<(GestureBinding Binding, string? App, int Count, int Index)>();
+        for (int i = 0; i < _entries.Count; i++)
+        {
+            var (b, app, r) = _entries[i];
+            if (r.Feed(frame)) hits.Add((b, app, r.LastFireCount, i));
+        }
 
         LastApp = null;
         LastModifiers = KeyModifiers.None;
@@ -563,9 +571,16 @@ public sealed class GestureDispatcher
             return fired;
         }
         var run = new List<(IGestureAction Action, int Count, KeyModifiers? BindingMods)>();
-        foreach (var (b, app, count) in hits)
+        foreach (var (b, app, count, index) in hits)
         {
             if (!IsActive(b, app, current, mods)) continue;
+            // 抑制時間の中の発火は捨てる (判定は進んでいる)。実行した時刻だけを覚える
+            if (b.CooldownMs > 0)
+            {
+                var last = _lastFiredMs[index];
+                if (last != long.MinValue && frame.TimeMs - last < b.CooldownMs) continue;
+                _lastFiredMs[index] = frame.TimeMs;
+            }
             for (int i = 0; i < count; i++) fired.Add(b.Spec);
             run.Add((b.Action, count, b.Modifiers));
         }

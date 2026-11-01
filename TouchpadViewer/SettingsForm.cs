@@ -526,6 +526,9 @@ namespace TouchpadViewer
                 Get = e => e.MaxTapMove, Set = (e, v) => e.MaxTapMove = v });
             thresholds.Add(new Threshold { Label = "maxSpreadMs (同時とみなす幅 ms)", Default = "100", IsInteger = true, Kinds = new[] { GestureKind.MultiTap },
                 Get = e => e.MaxSpreadMs, Set = (e, v) => e.MaxSpreadMs = v == null ? (long?)null : (long)v.Value });
+            GestureKind[] all = { GestureKind.Swipe, GestureKind.Tap, GestureKind.Pinch, GestureKind.LandOrder, GestureKind.MultiTap };
+            thresholds.Add(new Threshold { Label = "cooldownMs (連続発火の抑制 ms)", Default = "0", IsInteger = true, Kinds = all,
+                Get = e => e.CooldownMs, Set = (e, v) => e.CooldownMs = v == null ? (long?)null : (long)v.Value });
 
             foreach (Threshold t in thresholds)
             {
