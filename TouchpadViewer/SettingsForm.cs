@@ -97,6 +97,10 @@ namespace TouchpadViewer
 
         readonly string stateDir;
 
+        // ジェスチャーを実行しないアプリ。ファイルの "ignoreApps" と対応し、「除外アプリ...」で編集する
+        List<string> ignoreApps = new List<string>();
+        bool ignoreChanged;
+
         // 開いたときの割り当て (編集前) と、編集用の複製との対応。「閉じる」で並びだけを保存するのに使う
         readonly List<BindingEntry> original;
         readonly Dictionary<BindingEntry, BindingEntry> originalOf = new Dictionary<BindingEntry, BindingEntry>();
@@ -106,6 +110,8 @@ namespace TouchpadViewer
         {
             this.path = path;
             this.stateDir = stateDir;
+            try { ignoreApps = GestureConfig.LoadIgnoreApps(path); }
+            catch (Exception) { }
             original = source.ToList();
             entries = original.Select(e => e.Clone()).ToList();
             for (int i = 0; i < original.Count; i++)
@@ -156,7 +162,7 @@ namespace TouchpadViewer
 
         void BuildLeft()
         {
-            Panel left = new Panel { Dock = DockStyle.Left, Width = 400, Padding = new Padding(10, 10, 5, 0) };
+            Panel left = new Panel { Dock = DockStyle.Left, Width = 420, Padding = new Padding(10, 10, 5, 0) };
 
             Panel top = new Panel { Dock = DockStyle.Top, Height = 30 };
             top.Controls.Add(new Label { Text = "アプリで絞り込み", AutoSize = true, Location = new Point(0, 6) });
@@ -172,9 +178,11 @@ namespace TouchpadViewer
             list.MultiSelect = false;
             list.GridLines = true;
             list.Dock = DockStyle.Fill;
-            list.Columns.Add("アプリ", 80);
-            list.Columns.Add("ジェスチャー", 165);
-            list.Columns.Add("動作", 125);
+            list.ShowItemToolTips = true;
+            list.Columns.Add("アプリ", 70);
+            list.Columns.Add("ジェスチャー", 150);
+            list.Columns.Add("動作", 110);
+            list.Columns.Add("保存", 60);
             list.SelectedIndexChanged += delegate { OnListSelected(); };
 
             FlowLayoutPanel buttons = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 40, Padding = new Padding(0, 6, 0, 0) };
@@ -463,13 +471,16 @@ namespace TouchpadViewer
                 DialogResult = SaveOrderOnly() ? DialogResult.OK : DialogResult.Cancel;
                 Close();
             };
+            Button ignore = new Button { Text = "除外アプリ...", Width = 110, Dock = DockStyle.Right };
+            ignore.Click += delegate { EditIgnoreApps(); };
             Label note = new Label
             {
                 Dock = DockStyle.Fill,
-                Text = "黄色の行 = 編集済み、緑の行 = 追加 (どちらも、保存するまで反映されません)\r\n保存すると、手書きのコメントは消えます。元のファイルは .bak に残ります。",
+                Text = "黄色の行 = 編集済み、緑の行 = 追加 (どちらも、保存するまで反映されません)\r\n赤い文字 = このままでは保存できない行 (重複など。マウスを重ねると内容が出ます)。保存すると、手書きのコメントは消えます。元のファイルは .bak に残ります。",
                 TextAlign = ContentAlignment.MiddleLeft,
             };
             bottom.Controls.Add(note);
+            bottom.Controls.Add(ignore);
             bottom.Controls.Add(cancel);
             bottom.Controls.Add(save);
             Controls.Add(bottom);
@@ -576,9 +587,10 @@ namespace TouchpadViewer
             loading = true;
             list.BeginUpdate();
             list.Items.Clear();
+            errorsOf = BindingEditing.FindErrors(entries);
             foreach (BindingEntry e in entries.Where(MatchesFilter))
             {
-                ListViewItem item = new ListViewItem(new[] { "", "", "" }) { Tag = e };
+                ListViewItem item = new ListViewItem(new[] { "", "", "", "" }) { Tag = e };
                 SetRow(item, e);
                 list.Items.Add(item);
             }
@@ -613,12 +625,30 @@ namespace TouchpadViewer
             item.BackColor = RowBack(e);
             item.ForeColor = off ? SystemColors.GrayText : SystemColors.WindowText;
             item.SubItems[2].Text = BindingEditing.DescribeAction(e);
+
+            // 「保存して反映」でエラーになる行は、赤い文字で「エラー」と出す (内容はマウスを重ねると見える)
+            List<string> errs;
+            if (errorsOf.TryGetValue(e, out errs))
+            {
+                item.SubItems[3].Text = "エラー";
+                item.ForeColor = Color.Firebrick;
+                item.ToolTipText = "このままでは保存できません:\r\n" + string.Join("\r\n", errs.Select(m => " ・" + m));
+            }
+            else
+            {
+                item.SubItems[3].Text = "";
+                item.ToolTipText = "";
+            }
         }
+
+        // 保存時にエラーになる行と、その内容。割り当てを 1 つ変えると、重複のように、ほかの行のエラーも変わるので、変えるたびに作り直す
+        Dictionary<BindingEntry, List<string>> errorsOf = new Dictionary<BindingEntry, List<string>>();
 
         void RefreshRow(BindingEntry e)
         {
+            errorsOf = BindingEditing.FindErrors(entries);
             foreach (ListViewItem item in list.Items)
-                if (item.Tag == e) { SetRow(item, e); return; }
+                SetRow(item, (BindingEntry)item.Tag);
         }
 
         void OnListSelected()
@@ -1039,19 +1069,67 @@ namespace TouchpadViewer
             Close();
         }
 
-        // 追加・削除をしていなくて、並びだけが変わっているときに、編集前の中身のまま、並びだけを保存する。保存したら true
+        // 閉じるときに、編集前の中身のまま、並びの変更と除外アプリの変更だけを保存する。保存したら true
+        // (追加・削除をしているときは、並びは保存せず、元の並びのまま)
         bool SaveOrderOnly()
         {
-            if (entries.Count != original.Count) return false;
-            List<BindingEntry> ordered = new List<BindingEntry>();
-            foreach (BindingEntry e in entries)
+            List<BindingEntry> ordered = original;
+            if (entries.Count == original.Count)
             {
-                BindingEntry o;
-                if (!originalOf.TryGetValue(e, out o)) return false;
-                ordered.Add(o);
+                List<BindingEntry> mapped = new List<BindingEntry>();
+                foreach (BindingEntry e in entries)
+                {
+                    BindingEntry o;
+                    if (!originalOf.TryGetValue(e, out o)) { mapped = null; break; }
+                    mapped.Add(o);
+                }
+                if (mapped != null) ordered = mapped;
             }
-            if (ordered.SequenceEqual(original)) return false;
+            if (ordered.SequenceEqual(original) && !ignoreChanged) return false;
             return WriteEntries(ordered);
+        }
+
+        // 除外アプリ (ジェスチャーを実行しないアプリ) を、1 行に 1 つで編集する
+        void EditIgnoreApps()
+        {
+            using (Form dlg = new Form())
+            {
+                dlg.Text = "除外アプリ";
+                dlg.Font = Font;
+                dlg.ClientSize = new Size(440, 320);
+                dlg.StartPosition = FormStartPosition.CenterParent;
+                dlg.FormBorderStyle = FormBorderStyle.FixedDialog;
+                dlg.MaximizeBox = false;
+                dlg.MinimizeBox = false;
+                Label hint = new Label
+                {
+                    Dock = DockStyle.Top, Height = 74, Padding = new Padding(10, 8, 10, 0),
+                    Text = "ここに書いたアプリが前面のときは、ジェスチャーを実行しません (画面表示とログは通常どおり)。\r\n" +
+                           "1 行に 1 つ。アプリ名は、ログの [ ] の中の名前です (大文字小文字と .exe は区別しません)。",
+                };
+                TextBox box = new TextBox
+                {
+                    Dock = DockStyle.Fill, Multiline = true, AcceptsReturn = true, ScrollBars = ScrollBars.Vertical,
+                    Text = string.Join("\r\n", ignoreApps),
+                };
+                Panel buttons = new Panel { Dock = DockStyle.Bottom, Height = 44, Padding = new Padding(10, 8, 10, 8) };
+                Button ok = new Button { Text = "OK", Width = 90, Dock = DockStyle.Right, DialogResult = DialogResult.OK };
+                Button cancel = new Button { Text = "キャンセル", Width = 90, Dock = DockStyle.Right, DialogResult = DialogResult.Cancel };
+                buttons.Controls.Add(ok);
+                buttons.Controls.Add(cancel);
+                dlg.Controls.Add(box);
+                dlg.Controls.Add(buttons);
+                dlg.Controls.Add(hint);
+                dlg.AcceptButton = ok;
+                dlg.CancelButton = cancel;
+                if (dlg.ShowDialog(this) != DialogResult.OK) return;
+
+                List<string> now = GestureConfig.NormalizeApps(
+                    box.Text.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries));
+                if (now.SequenceEqual(ignoreApps)) return;
+                ignoreApps = now;
+                ignoreChanged = true;
+            }
         }
 
         // 設定ファイルに書き出す。手書きのコメントが消える場合は確認し、元のファイルは .bak に残す。書けたら true
@@ -1069,7 +1147,7 @@ namespace TouchpadViewer
                     if (r != DialogResult.OK) return false;
                 }
                 if (existing != null) File.Copy(path, path + ".bak", true);
-                File.WriteAllText(path, GestureConfig.ToJson(list), new UTF8Encoding(false));
+                File.WriteAllText(path, GestureConfig.ToJson(list, ignoreApps), new UTF8Encoding(false));
             }
             catch (Exception ex)
             {

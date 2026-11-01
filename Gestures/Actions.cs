@@ -497,6 +497,12 @@ public sealed class GestureDispatcher
     /// <summary>最後に発火したときの前面アプリ名 (正規化済み)。取れなかった/発火が無いときは null。</summary>
     public string? LastApp { get; private set; }
 
+    // ジェスチャーを実行しないアプリ (正規化済み)。前面がこのアプリのときは、発火しても何もしない
+    readonly HashSet<string> _ignoreApps;
+
+    /// <summary>直近の Feed で、前面アプリが除外対象だったために、発火を抑制したか。</summary>
+    public bool LastSuppressed { get; private set; }
+
     /// <summary>最後に発火したときに押されていた修飾キー。</summary>
     public KeyModifiers LastModifiers { get; private set; }
 
@@ -510,8 +516,9 @@ public sealed class GestureDispatcher
     /// </param>
     public GestureDispatcher(IEnumerable<GestureBinding> bindings, IInputSender sender,
         Func<string?>? foregroundApp = null, Func<KeyModifiers>? modifierState = null,
-        Func<IReadOnlyList<ushort>>? heldModifierKeys = null)
+        Func<IReadOnlyList<ushort>>? heldModifierKeys = null, IEnumerable<string>? ignoreApps = null)
     {
+        _ignoreApps = new HashSet<string>(GestureConfig.NormalizeApps(ignoreApps));
         var seen = new HashSet<(string?, KeyModifiers?, IGestureSpec)>();
         _entries = new();
         foreach (var b in bindings)
@@ -542,6 +549,7 @@ public sealed class GestureDispatcher
 
         LastApp = null;
         LastModifiers = KeyModifiers.None;
+        LastSuppressed = false;
         var fired = new List<IGestureSpec>();
         if (hits.Count == 0) return fired;
 
@@ -549,6 +557,11 @@ public sealed class GestureDispatcher
         var mods = _modifierState?.Invoke() ?? KeyModifiers.None;
         LastApp = current;
         LastModifiers = mods;
+        if (current is not null && _ignoreApps.Contains(current))
+        {
+            LastSuppressed = true;
+            return fired;
+        }
         var run = new List<(IGestureAction Action, int Count, KeyModifiers? BindingMods)>();
         foreach (var (b, app, count) in hits)
         {

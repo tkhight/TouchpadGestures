@@ -470,10 +470,12 @@ namespace TouchpadViewer
                     AddLog("設定ファイルの見本を作成しました");
                 }
                 IReadOnlyList<Gestures.GestureBinding> bindings = Gestures.GestureConfig.Load(path);
+                List<string> ignoreApps = Gestures.GestureConfig.LoadIgnoreApps(path);
                 ReleaseHolds();
                 dispatcher = new Gestures.GestureDispatcher(bindings, sender, Gestures.ForegroundApp.GetProcessName,
-                    Gestures.KeyboardState.GetModifiers, Gestures.KeyboardState.GetHeldModifierKeys);
-                AddLog("設定を読み込みました: " + bindings.Count + "件");
+                    Gestures.KeyboardState.GetModifiers, Gestures.KeyboardState.GetHeldModifierKeys, ignoreApps);
+                AddLog("設定を読み込みました: " + bindings.Count + "件" +
+                    (ignoreApps.Count == 0 ? "" : " (除外アプリ " + ignoreApps.Count + "件)"));
                 ok = true;
             }
             catch (Exception ex)
@@ -508,6 +510,8 @@ namespace TouchpadViewer
             if (gestureLog.Count > 8) gestureLog.RemoveAt(gestureLog.Count - 1);
         }
 
+        long lastSuppressLogMs = -1000;
+
         // 完成した1フレームを判定器に渡す。座標は「パッド幅 = 1.0」に正規化 (Y も XMax で割る)
         void RunGestures(PtpDevice dev)
         {
@@ -531,6 +535,13 @@ namespace TouchpadViewer
             {
                 AddLog("実行エラー: " + ex.Message);
                 return;
+            }
+
+            // 除外アプリで抑制したときは、ログにだけ残す (連続発火で流れないよう、1 秒に 1 回まで)
+            if (dispatcher.LastSuppressed && clock.ElapsedMilliseconds - lastSuppressLogMs >= 1000)
+            {
+                lastSuppressLogMs = clock.ElapsedMilliseconds;
+                AddLog("除外アプリのため実行しません  [" + dispatcher.LastApp + "]");
             }
 
             // 連続発火のときは、同じ定義が発火回数ぶん並ぶ

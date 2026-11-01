@@ -79,7 +79,47 @@ public static class GestureConfig
 
     sealed class FileDto
     {
+        public List<string>? IgnoreApps { get; set; }
         public List<BindingEntry>? Bindings { get; set; }
+    }
+
+    static FileDto ParseFile(string json)
+    {
+        FileDto? file;
+        try
+        {
+            file = JsonSerializer.Deserialize<FileDto>(json, Options);
+        }
+        catch (JsonException ex)
+        {
+            throw new GestureConfigException(new[] { "JSON の形式が不正です: " + ex.Message });
+        }
+
+        if (file?.Bindings is null)
+            throw new GestureConfigException(new[] { "\"bindings\" 配列がありません" });
+        return file;
+    }
+
+    /// <summary>ジェスチャーの実行を抑制するアプリ (正規化済み。重複・空は除く)。</summary>
+    /// <exception cref="GestureConfigException">JSON の形式が不正なとき。</exception>
+    public static List<string> ParseIgnoreApps(string json)
+        => NormalizeApps(ParseFile(json).IgnoreApps);
+
+    /// <exception cref="GestureConfigException">JSON の形式が不正なとき。</exception>
+    public static List<string> LoadIgnoreApps(string path)
+        => ParseIgnoreApps(File.ReadAllText(path, Encoding.UTF8));
+
+    /// <summary>アプリ名の一覧を、比較用に正規化する (空と重複は除く)。</summary>
+    public static List<string> NormalizeApps(IEnumerable<string>? names)
+    {
+        var result = new List<string>();
+        if (names is null) return result;
+        foreach (var n in names)
+        {
+            var s = AppNames.Normalize(n);
+            if (s is not null && !result.Contains(s)) result.Add(s);
+        }
+        return result;
     }
 
     /// <exception cref="GestureConfigException">形式・内容に問題があるとき。</exception>
@@ -97,19 +137,7 @@ public static class GestureConfig
     /// <exception cref="GestureConfigException">JSON の形式が不正、または "bindings" 配列が無いとき。</exception>
     public static List<BindingEntry> ParseEntries(string json)
     {
-        FileDto? file;
-        try
-        {
-            file = JsonSerializer.Deserialize<FileDto>(json, Options);
-        }
-        catch (JsonException ex)
-        {
-            throw new GestureConfigException(new[] { "JSON の形式が不正です: " + ex.Message });
-        }
-
-        if (file?.Bindings is null)
-            throw new GestureConfigException(new[] { "\"bindings\" 配列がありません" });
-        return file.Bindings;
+        return ParseFile(json).Bindings!;
     }
 
     static readonly JsonSerializerOptions WriteOptions = new()
@@ -120,11 +148,15 @@ public static class GestureConfig
     };
 
     /// <summary>編集用の一覧を、設定ファイルの JSON にする。1 件を 1 行に書く。手書きのコメントは残らない。</summary>
-    public static string ToJson(IEnumerable<BindingEntry> entries)
+    public static string ToJson(IEnumerable<BindingEntry> entries, IEnumerable<string>? ignoreApps = null)
     {
         var sb = new StringBuilder();
         sb.Append("// このファイルは設定画面からも編集できます。設定画面で保存すると、手書きのコメントは消えます\n");
-        sb.Append("{\n  \"bindings\": [");
+        sb.Append("{\n");
+        var ignore = NormalizeApps(ignoreApps);
+        if (ignore.Count > 0)
+            sb.Append("  \"ignoreApps\": ").Append(JsonSerializer.Serialize(ignore, WriteOptions)).Append(",\n");
+        sb.Append("  \"bindings\": [");
         bool first = true;
         foreach (var e in entries)
         {

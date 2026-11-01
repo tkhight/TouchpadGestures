@@ -98,6 +98,35 @@ public static class BindingEditing
         all.Insert(to, item);
     }
 
+    /// <summary>
+    /// 「保存して反映」で出るエラーを、割り当てごとに事前に調べる (保存時と同じ GestureConfig.Build の判定)。
+    /// エラーのある割り当てだけが入り、値はその内容 (「bindings[n] "名前": 」の部分を除いたもの)。
+    /// 同じジェスチャーの重複は、後ろにある方に出る。
+    /// </summary>
+    public static Dictionary<BindingEntry, List<string>> FindErrors(IReadOnlyList<BindingEntry> entries)
+    {
+        var result = new Dictionary<BindingEntry, List<string>>();
+        try
+        {
+            GestureConfig.Build(entries);
+        }
+        catch (GestureConfigException ex)
+        {
+            foreach (var line in ex.Errors)
+            {
+                var m = System.Text.RegularExpressions.Regex.Match(line, @"^bindings\[(\d+)\](?: ""[^""]*"")?: (.*)$",
+                    System.Text.RegularExpressions.RegexOptions.Singleline);
+                if (!m.Success || !int.TryParse(m.Groups[1].Value, out int i) || i < 0 || i >= entries.Count) continue;
+                if (!result.TryGetValue(entries[i], out var list)) result[entries[i]] = list = new List<string>();
+                // メッセージの中で、ほかの割り当てを指す "bindings[n]" は、一覧に出ている名前にする (n は絞り込み前の番号で、画面では分からない)
+                list.Add(System.Text.RegularExpressions.Regex.Replace(m.Groups[2].Value, @"bindings\[(\d+)\](?: ""[^""]*"")?", r =>
+                    int.TryParse(r.Groups[1].Value, out int k) && k >= 0 && k < entries.Count
+                        ? "「" + ModifiersLabel(entries[k]) + DisplayName(entries[k]) + "」" : r.Value));
+            }
+        }
+        return result;
+    }
+
     /// <summary>一覧に出す、修飾キーの条件。条件がない (または読めない) ときは空。</summary>
     public static string ModifiersLabel(BindingEntry e)
     {
