@@ -270,9 +270,14 @@ public sealed class WindowMoveAction : IHoldAction
 {
     const long MaxHoldMs = 60_000;
     const double PixelsPerPadWidth = 1500;
+    // ウィンドウへの反映は、これより短い間隔では行わない。再描画の重いウィンドウに、フレームごと (100Hz 以上) に
+    // 大きさ変更を送ると、処理が追いつかず、入力がたまってどんどん遅くなる
+    const long MinSendIntervalMs = 16;
 
     readonly double _speed;
     readonly bool _resize;
+    long _lastSendMs;
+    int _pendingX, _pendingY;
     bool _held;
     long _window;
     long _startMs;
@@ -298,6 +303,8 @@ public sealed class WindowMoveAction : IHoldAction
     {
         if (_held) return;
         _window = sender.GrabWindow();
+        _lastSendMs = long.MinValue;
+        _pendingX = _pendingY = 0;
         _held = true;
         _startMs = frame.TimeMs;
         _prev = null;
@@ -321,11 +328,12 @@ public sealed class WindowMoveAction : IHoldAction
             int ix = (int)Math.Truncate(dx), iy = (int)Math.Truncate(dy);
             _remX = dx - ix;
             _remY = dy - iy;
-            if (ix != 0 || iy != 0)
+            _pendingX += ix;
+            _pendingY += iy;
+            if ((_pendingX != 0 || _pendingY != 0) && (_lastSendMs == long.MinValue || frame.TimeMs - _lastSendMs >= MinSendIntervalMs))
             {
-                if (_resize) sender.ResizeWindowBy(_window, ix, iy);
-                else sender.MoveWindowBy(_window, ix, iy);
-                sender.MoveCursor(ix, iy);
+                Flush(sender);
+                _lastSendMs = frame.TimeMs;
             }
         }
         _prev = (cx, cy);
@@ -333,10 +341,29 @@ public sealed class WindowMoveAction : IHoldAction
         return true;
     }
 
+    // ためた分をまとめて、ウィンドウとカーソルへ反映する
+    void Flush(IInputSender sender)
+    {
+        int x = _pendingX, y = _pendingY;
+        _pendingX = _pendingY = 0;
+        if (x == 0 && y == 0) return;
+        if (_resize) sender.ResizeWindowBy(_window, x, y);
+        else sender.MoveWindowBy(_window, x, y);
+        sender.MoveCursor(x, y);
+    }
+
     public void End(IInputSender sender)
     {
+        if (!_held) return;
         _held = false;
-        _window = 0;
+        try
+        {
+            if (_window != 0) Flush(sender);   // 間引いて残った分を、最後に反映する
+        }
+        finally
+        {
+            _window = 0;
+        }
     }
 }
 

@@ -76,7 +76,12 @@ public sealed class Win32InputSender : IInputSender
     static extern bool SetWindowPos(IntPtr hwnd, IntPtr after, int x, int y, int cx, int cy, uint flags);
 
     const uint GA_ROOT = 2;
-    const uint SWP_NOSIZE = 0x0001, SWP_NOMOVE = 0x0002, SWP_NOZORDER = 0x0004, SWP_NOACTIVATE = 0x0010;
+    const uint SWP_NOSIZE = 0x0001, SWP_NOMOVE = 0x0002, SWP_NOZORDER = 0x0004, SWP_NOACTIVATE = 0x0010, SWP_ASYNCWINDOWPOS = 0x4000;
+
+    // つかんだときの位置と大きさ。以降は、ここからの合計の変化量で位置・大きさを決める
+    // (ウィンドウの現在の大きさを毎回読むと、非同期に反映する間に、読んだ値が古くなってずれる)
+    RECT _grabRect;
+    int _accX, _accY;
 
     public long GrabWindow()
     {
@@ -88,22 +93,30 @@ public sealed class Win32InputSender : IInputSender
         var sb = new System.Text.StringBuilder(64);
         GetClassName(h, sb, sb.Capacity);
         // デスクトップ・タスクバーは動かさない
-        return sb.ToString() is "Progman" or "WorkerW" or "Shell_TrayWnd" or "Shell_SecondaryTrayWnd" ? 0 : h.ToInt64();
+        if (sb.ToString() is "Progman" or "WorkerW" or "Shell_TrayWnd" or "Shell_SecondaryTrayWnd") return 0;
+        if (!GetWindowRect(h, out _grabRect)) return 0;
+        _accX = _accY = 0;
+        return h.ToInt64();
     }
 
     public void MoveWindowBy(long window, int dx, int dy)
     {
         var h = new IntPtr(window);
-        if (!IsWindow(h) || !GetWindowRect(h, out var r)) return;
-        SetWindowPos(h, IntPtr.Zero, r.Left + dx, r.Top + dy, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+        if (!IsWindow(h)) return;
+        _accX += dx;
+        _accY += dy;
+        SetWindowPos(h, IntPtr.Zero, _grabRect.Left + _accX, _grabRect.Top + _accY, 0, 0,
+            SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS);
     }
 
     public void ResizeWindowBy(long window, int dw, int dh)
     {
         var h = new IntPtr(window);
-        if (!IsWindow(h) || !GetWindowRect(h, out var r)) return;
-        SetWindowPos(h, IntPtr.Zero, 0, 0, Math.Max(1, r.Right - r.Left + dw), Math.Max(1, r.Bottom - r.Top + dh),
-            SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+        if (!IsWindow(h)) return;
+        _accX += dw;
+        _accY += dh;
+        SetWindowPos(h, IntPtr.Zero, 0, 0, Math.Max(1, _grabRect.Right - _grabRect.Left + _accX), Math.Max(1, _grabRect.Bottom - _grabRect.Top + _accY),
+            SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS);
     }
 
     public void KeyDown(ushort vk) => SendKey(vk, false);

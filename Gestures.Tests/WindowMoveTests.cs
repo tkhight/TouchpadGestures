@@ -104,6 +104,21 @@ public class WindowMoveTests
     }
 
     [Fact]
+    public void FastFrames_AreBatched_AndTheRestIsFlushedAtEnd()
+    {
+        var f = new Fake();
+        var a = new WindowMoveAction();
+        a.Begin(Three(0), f);
+        a.Update(Three(0), f);
+        for (int i = 1; i <= 10; i++) a.Update(Three(i * 4, 0.002 * i), f);   // 4ms ごと、1 回に 3px
+        var sent = f.Log.Count(l => l.StartsWith("win42:"));
+        Assert.InRange(sent, 1, 3);                       // フレームごと (10 回) には送らない
+        a.End(f);
+        int total = f.Log.Where(l => l.StartsWith("win42:")).Sum(l => int.Parse(l[(l.IndexOf(':') + 1)..l.IndexOf(',')]));
+        Assert.Equal(30, total);                          // 間引いても、合計は変わらない
+    }
+
+    [Fact]
     public void BadSpeed_Throws()
         => Assert.Throws<ArgumentOutOfRangeException>(() => new WindowMoveAction(0));
 
