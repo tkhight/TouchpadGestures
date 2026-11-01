@@ -1,6 +1,6 @@
 namespace Gestures;
 
-public enum GestureKind { Swipe, Tap, Pinch, LandOrder }
+public enum GestureKind { Swipe, Tap, Pinch, LandOrder, MultiTap }
 
 /// <summary>設定画面から BindingEntry を読み書きするための補助。画面の部品に依存しないので、単体テストできる。</summary>
 public static class BindingEditing
@@ -8,6 +8,7 @@ public static class BindingEditing
     public static GestureKind KindOf(BindingEntry e)
         => e.Pinch is not null ? GestureKind.Pinch
          : e.LandOrder is not null ? GestureKind.LandOrder
+         : e.TapAll == true ? GestureKind.MultiTap
          : e.TapSlot is not null || e.TapCount is not null ? GestureKind.Tap
          : GestureKind.Swipe;
 
@@ -17,6 +18,7 @@ public static class BindingEditing
         e.Slot = null; e.Direction = null; e.Motions = null;
         e.Pinch = null; e.PinchDistance = null; e.CentroidTolerance = null;
         e.LandOrder = null; e.LandMinGapMs = null; e.LandMaxGapMs = null; e.LandMaxMove = null;
+        e.TapAll = null; e.MaxSpreadMs = null;
         e.TapSlot = null; e.TapCount = null; e.MaxTapMs = null; e.MaxGapMs = null; e.MaxTapMove = null;
         e.MinDistance = null; e.FixedTolerance = null; e.SettleMs = null; e.RepeatDistance = null;
     }

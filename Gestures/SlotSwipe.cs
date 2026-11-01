@@ -239,6 +239,7 @@ public sealed class GestureEngine
         TapSpec t => new TapRecognizer(t),
         PinchSpec p => new PinchRecognizer(p),
         LandOrderSpec l => new LandOrderRecognizer(l),
+        MultiTapSpec m => new MultiTapRecognizer(m),
         _ => throw new ArgumentException("Unknown gesture spec: " + spec.GetType().Name, nameof(spec)),
     };
 

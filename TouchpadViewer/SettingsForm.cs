@@ -58,6 +58,9 @@ namespace TouchpadViewer
         readonly RadioButton rbTap = new RadioButton();
         readonly RadioButton rbPinch = new RadioButton();
         readonly RadioButton rbLand = new RadioButton();
+        readonly RadioButton rbMulti = new RadioButton();
+        readonly GroupBox grpMulti = new GroupBox();
+        readonly NumericUpDown numMultiCount = new NumericUpDown();
         readonly GroupBox grpSwipe = new GroupBox();
         readonly FlowLayoutPanel fingerRow = new FlowLayoutPanel();
         readonly List<ComboBox> fingerCombos = new List<ComboBox>();
@@ -195,11 +198,12 @@ namespace TouchpadViewer
 
             basic.Controls.Add(new Label { Text = "種類", AutoSize = true, Location = new Point(0, 102) });
             rbSwipe.Text = "スワイプ"; rbSwipe.AutoSize = true; rbSwipe.Location = new Point(90, 100);
-            rbTap.Text = "タップ"; rbTap.AutoSize = true; rbTap.Location = new Point(190, 100);
-            rbPinch.Text = "ピンチ"; rbPinch.AutoSize = true; rbPinch.Location = new Point(280, 100);
-            rbLand.Text = "着地順"; rbLand.AutoSize = true; rbLand.Location = new Point(370, 100);
+            rbTap.Text = "タップ"; rbTap.AutoSize = true; rbTap.Location = new Point(165, 100);
+            rbPinch.Text = "ピンチ"; rbPinch.AutoSize = true; rbPinch.Location = new Point(240, 100);
+            rbLand.Text = "着地順"; rbLand.AutoSize = true; rbLand.Location = new Point(315, 100);
+            rbMulti.Text = "同時タップ"; rbMulti.AutoSize = true; rbMulti.Location = new Point(395, 100);
             rbSwipe.Checked = true;
-            basic.Controls.AddRange(new Control[] { rbSwipe, rbTap, rbPinch, rbLand });
+            basic.Controls.AddRange(new Control[] { rbSwipe, rbTap, rbPinch, rbLand, rbMulti });
 
             chkUseMods.Text = "修飾キーを押しながら";
             chkUseMods.AutoSize = true;
@@ -252,6 +256,19 @@ namespace TouchpadViewer
             cboPinch.Width = 130;
             grpPinch.Controls.Add(cboPinch);
             flow.Controls.Add(grpPinch);
+
+            // 同時タップ
+            grpMulti.Text = "同時タップ";
+            grpMulti.Width = 520;
+            grpMulti.Height = 70;
+            grpMulti.Controls.Add(new Label { Text = "回数", AutoSize = true, Location = new Point(10, 30) });
+            numMultiCount.Location = new Point(50, 26);
+            numMultiCount.Width = 55;
+            numMultiCount.Minimum = 1;
+            numMultiCount.Maximum = 5;
+            grpMulti.Controls.Add(numMultiCount);
+            grpMulti.Controls.Add(new Label { Text = "(指の数ぶんの指が、ほぼ同時に着地して、ほぼ同時に離れる)", AutoSize = true, Location = new Point(120, 30) });
+            flow.Controls.Add(grpMulti);
 
             // 着地順: 着地した順に、その指が左から何番目か
             grpLand.Text = "着地する順番 (全員が触れたままで、最後の指が着地したときに発火)";
@@ -344,6 +361,8 @@ namespace TouchpadViewer
             rbTap.CheckedChanged += delegate { OnKindChanged(); };
             rbPinch.CheckedChanged += delegate { OnKindChanged(); };
             rbLand.CheckedChanged += delegate { OnKindChanged(); };
+            rbMulti.CheckedChanged += delegate { OnKindChanged(); };
+            numMultiCount.ValueChanged += changed;
             cboTapSlot.SelectedIndexChanged += changed;
             numTapCount.ValueChanged += changed;
             cboPinch.SelectedIndexChanged += changed;
@@ -382,7 +401,7 @@ namespace TouchpadViewer
 
         void BuildThresholds()
         {
-            GestureKind[] sw = { GestureKind.Swipe }, tp = { GestureKind.Tap }, pn = { GestureKind.Pinch };
+            GestureKind[] sw = { GestureKind.Swipe }, tp = { GestureKind.Tap, GestureKind.MultiTap }, pn = { GestureKind.Pinch };
             GestureKind[] swPn = { GestureKind.Swipe, GestureKind.Pinch }, swTp = { GestureKind.Swipe, GestureKind.Tap };
             thresholds.Add(new Threshold { Label = "minDistance (動かす距離)", Default = "0.06", Kinds = sw,
                 Get = e => e.MinDistance, Set = (e, v) => e.MinDistance = v });
@@ -409,6 +428,8 @@ namespace TouchpadViewer
                 Get = e => e.MaxGapMs, Set = (e, v) => e.MaxGapMs = v == null ? (long?)null : (long)v.Value });
             thresholds.Add(new Threshold { Label = "maxTapMove (タップ中の動き)", Default = "0.03", Kinds = tp,
                 Get = e => e.MaxTapMove, Set = (e, v) => e.MaxTapMove = v });
+            thresholds.Add(new Threshold { Label = "maxSpreadMs (同時とみなす幅 ms)", Default = "100", IsInteger = true, Kinds = new[] { GestureKind.MultiTap },
+                Get = e => e.MaxSpreadMs, Set = (e, v) => e.MaxSpreadMs = v == null ? (long?)null : (long)v.Value });
 
             foreach (Threshold t in thresholds)
             {
@@ -573,7 +594,7 @@ namespace TouchpadViewer
         GestureKind CurrentKind()
         {
             return rbTap.Checked ? GestureKind.Tap : rbPinch.Checked ? GestureKind.Pinch
-                : rbLand.Checked ? GestureKind.LandOrder : GestureKind.Swipe;
+                : rbLand.Checked ? GestureKind.LandOrder : rbMulti.Checked ? GestureKind.MultiTap : GestureKind.Swipe;
         }
 
         void ShowKindPanels()
@@ -583,6 +604,7 @@ namespace TouchpadViewer
             grpTap.Visible = k == GestureKind.Tap;
             grpPinch.Visible = k == GestureKind.Pinch;
             grpLand.Visible = k == GestureKind.LandOrder;
+            grpMulti.Visible = k == GestureKind.MultiTap;
             LayoutThresholds();
         }
 
@@ -665,6 +687,8 @@ namespace TouchpadViewer
             rbTap.Checked = kind == GestureKind.Tap;
             rbPinch.Checked = kind == GestureKind.Pinch;
             rbLand.Checked = kind == GestureKind.LandOrder;
+            rbMulti.Checked = kind == GestureKind.MultiTap;
+            numMultiCount.Value = Math.Min(Math.Max(e.TapCount ?? 1, (int)numMultiCount.Minimum), (int)numMultiCount.Maximum);
 
             // 指ごとの動きは、先に今の入力欄の指の数に合わせてから、entry の値を入れる
             fingerCombos.Clear();
@@ -758,6 +782,11 @@ namespace TouchpadViewer
             {
                 e.TapSlot = Math.Max(cboTapSlot.SelectedIndex, 0);
                 e.TapCount = (int)numTapCount.Value;
+            }
+            else if (kind == GestureKind.MultiTap)
+            {
+                e.TapAll = true;
+                e.TapCount = numMultiCount.Value > 1 ? (int)numMultiCount.Value : (int?)null;
             }
             else if (kind == GestureKind.LandOrder)
             {

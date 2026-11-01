@@ -32,6 +32,9 @@ public static class GestureConfig
           // 着地順は landOrder (着地した順に、その指が左から何番目か。0 始まり)。fingers 本が全部触れたときに発火する
           //   例: { "fingers": 3, "landOrder": [0, 1, 2], "action": { ... } } (左→中→右の順に置く)
           //   landMinGapMs (既定 80) / landMaxGapMs (既定 500) / landMaxMove (既定 0.03) は省略可
+          // 同時タップは tapAll: true。fingers 本がほぼ同時に着地して、ほぼ同時に離れる。tapCount (回数) も使える
+          //   maxSpreadMs (既定 100。「同時」とみなす幅) / maxTapMs / maxGapMs / maxTapMove は省略可
+          //   例: { "fingers": 3, "tapAll": true, "action": { ... } } (Windows の 3 本指タップは、設定で「何もしない」に)
           // タップは tapSlot (左から数えた番号) と tapCount (回数、省略で 1)。他の指は触れたまま、その指だけが
           //   触れて離れるのを数える。maxTapMs / maxGapMs / maxTapMove は省略可
           //   例: { "fingers": 3, "tapSlot": 0, "tapCount": 2, "action": { ... } }
@@ -164,7 +167,8 @@ public static class GestureConfig
             }
             SwipeDirection dir = default;
             SwipeDirection?[]? motions = null;
-            bool isTap = b.TapSlot is not null || b.TapCount is not null;
+            bool isMulti = b.TapAll == true;
+            bool isTap = b.TapSlot is not null || (b.TapCount is not null && !isMulti);
             bool isPinch = b.Pinch is not null;
             bool isLand = b.LandOrder is not null;
             PinchDirection pinchDir = default;
@@ -188,6 +192,24 @@ public static class GestureConfig
             {
                 errors.Add($"{label}: pinchDistance / centroidTolerance は pinch と一緒にだけ指定できます");
             }
+            if (isMulti)
+            {
+                if (isTap || isPinch || isLand) errors.Add($"{label}: tapAll と tapSlot / pinch / landOrder は一緒に指定できません");
+                if (b.Slot is not null || b.Direction is not null || b.Motions is not null || b.MinDistance is not null
+                    || b.FixedTolerance is not null || b.SettleMs is not null || b.RepeatDistance is not null)
+                    errors.Add($"{label}: 同時タップには slot / direction / motions / minDistance / fixedTolerance / settleMs / repeatDistance は使えません");
+                if (b.Fingers < 2) errors.Add($"{label}: tapAll は 2 本以上の指で指定してください");
+                if (b.TapCount < 1) errors.Add($"{label}: tapCount は 1 以上にしてください");
+                if (b.MaxTapMs <= 0) errors.Add($"{label}: maxTapMs は 0 より大きい値にしてください");
+                if (b.MaxGapMs <= 0) errors.Add($"{label}: maxGapMs は 0 より大きい値にしてください");
+                if (b.MaxTapMove <= 0) errors.Add($"{label}: maxTapMove は 0 より大きい値にしてください");
+                if (b.MaxSpreadMs < 0) errors.Add($"{label}: maxSpreadMs は 0 以上にしてください");
+            }
+            else
+            {
+                if (b.TapAll is not null) errors.Add($"{label}: tapAll は true のときだけ指定できます (使わないなら項目ごと省く)");
+                if (b.MaxSpreadMs is not null) errors.Add($"{label}: maxSpreadMs は tapAll と一緒にだけ指定できます");
+            }
             if (isLand)
             {
                 if (isTap || isPinch) errors.Add($"{label}: landOrder と tapSlot / tapCount / pinch は一緒に指定できません");
@@ -210,7 +232,7 @@ public static class GestureConfig
             {
                 errors.Add($"{label}: landMinGapMs / landMaxGapMs / landMaxMove は landOrder と一緒にだけ指定できます");
             }
-            if (isLand)
+            if (isLand || isMulti)
             {
             }
             else if (isPinch)
@@ -262,7 +284,18 @@ public static class GestureConfig
 
             int fingers = b.Fingers!.Value;
             IGestureSpec spec;
-            if (isLand)
+            if (isMulti)
+            {
+                int mc = b.TapCount ?? 1;
+                var multi = new MultiTapSpec(
+                    string.IsNullOrEmpty(b.Name) ? DefaultMultiTapName(fingers, mc) : b.Name, fingers, mc);
+                if (b.MaxTapMs is long xt) multi = multi with { MaxTapMs = xt };
+                if (b.MaxGapMs is long xg) multi = multi with { MaxGapMs = xg };
+                if (b.MaxTapMove is double xm) multi = multi with { MaxTapMove = xm };
+                if (b.MaxSpreadMs is long xs) multi = multi with { MaxSpreadMs = xs };
+                spec = multi;
+            }
+            else if (isLand)
             {
                 var land = new LandOrderSpec(
                     string.IsNullOrEmpty(b.Name) ? DefaultLandName(fingers, b.LandOrder!) : b.Name,
@@ -456,6 +489,9 @@ public static class GestureConfig
         return $"{fingers}本指・{seq}の順に着地";
     }
 
+    static string DefaultMultiTapName(int fingers, int count)
+        => $"{fingers}本指で同時に{(count == 1 ? "" : count + "回")}タップ";
+
     static string DefaultTapName(int fingers, int slot, int count)
         => $"{fingers}本指・左から{slot + 1}番目を{(count == 1 ? "" : count + "回")}タップ";
 
@@ -486,6 +522,10 @@ public sealed class BindingEntry
     public long? LandMinGapMs { get; set; }
     public long? LandMaxGapMs { get; set; }
     public double? LandMaxMove { get; set; }
+    /// <summary>true なら、同時タップ (fingers 本がほぼ同時に着地して離れる)。tapCount で回数。</summary>
+    public bool? TapAll { get; set; }
+    /// <summary>同時タップの「同時」とみなす幅 (ms)。</summary>
+    public long? MaxSpreadMs { get; set; }
     public int? TapSlot { get; set; }
     public int? TapCount { get; set; }
     public long? MaxTapMs { get; set; }
@@ -503,6 +543,7 @@ public sealed class BindingEntry
         Motions = Motions is null ? null : new List<string?>(Motions),
         Pinch = Pinch, PinchDistance = PinchDistance, CentroidTolerance = CentroidTolerance,
         LandOrder = LandOrder is null ? null : new List<int>(LandOrder), LandMinGapMs = LandMinGapMs, LandMaxGapMs = LandMaxGapMs, LandMaxMove = LandMaxMove,
+        TapAll = TapAll, MaxSpreadMs = MaxSpreadMs,
         TapSlot = TapSlot, TapCount = TapCount, MaxTapMs = MaxTapMs, MaxGapMs = MaxGapMs, MaxTapMove = MaxTapMove,
         MinDistance = MinDistance, FixedTolerance = FixedTolerance, SettleMs = SettleMs, RepeatDistance = RepeatDistance,
         Action = Action is null ? null : new ActionEntry { Hotkey = Action.Hotkey, Wheel = Action.Wheel, Horizontal = Action.Horizontal, Click = Action.Click, Count = Action.Count, Hold = Action.Hold, Follow = Action.Follow, Speed = Action.Speed },
