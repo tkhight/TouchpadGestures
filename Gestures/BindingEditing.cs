@@ -21,6 +21,7 @@ public static class BindingEditing
         e.TapAll = null; e.MaxSpreadMs = null;
         e.TapSlot = null; e.TapCount = null; e.MaxTapMs = null; e.MaxGapMs = null; e.MaxTapMove = null;
         e.MinDistance = null; e.FixedTolerance = null; e.SettleMs = null; e.RepeatDistance = null;
+        e.CooldownMs = null;   // 画面の「詳細」の欄から読み直す (欄を空にしたら消える)
     }
 
     /// <summary>

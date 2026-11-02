@@ -372,9 +372,10 @@ namespace TouchpadViewer
             chkFollow.AutoSize = true;
             chkFollow.Checked = true;
             chkFollow.Location = new Point(122, 158);
+            chkFollow.Visible = false;   // 変える機会がないので隠す (値は保持され、JSON の follow は効く)
             numClickCount.Maximum = 5;
-            Label speedLabel = new Label { Text = "速さ", AutoSize = true, Location = new Point(340, 160) };
-            numSpeed.Location = new Point(374, 156);
+            Label speedLabel = new Label { Text = "速さ", AutoSize = true, Location = new Point(122, 160) };
+            numSpeed.Location = new Point(156, 156);
             numSpeed.Width = 60;
             numSpeed.DecimalPlaces = 1;
             numSpeed.Increment = 0.1M;
@@ -459,6 +460,7 @@ namespace TouchpadViewer
             numMoveSpeed.ValueChanged += changed;
             cboClick.SelectedIndexChanged += changed;
             numClickCount.ValueChanged += changed;
+            chkHold.CheckedChanged += delegate { UpdateHoldEnabled(); };
             chkHold.CheckedChanged += changed;
             chkFollow.CheckedChanged += changed;
             numSpeed.ValueChanged += changed;
@@ -876,6 +878,7 @@ namespace TouchpadViewer
                 (int)numClickCount.Minimum), (int)numClickCount.Maximum);
             chkHold.Checked = e.Action != null && e.Action.Hold == true;
             chkFollow.Checked = e.Action == null || e.Action.Follow != false;
+            UpdateHoldEnabled();
             // クリックの速さは、クリックの割り当てのときだけ読む (移動・大きさ変更の速さが、こちらにも出てしまわないように)
             numSpeed.Value = Math.Min(Math.Max(click && e.Action.Speed != null ? (decimal)e.Action.Speed.Value : 1M,
                 numSpeed.Minimum), numSpeed.Maximum);
@@ -887,6 +890,12 @@ namespace TouchpadViewer
             ShowKindPanels();
             loading = false;
             ShowValidation();
+        }
+
+        // 「指の動きでカーソルを動かす」と「速さ」は、「ドラッグする」のときだけ保存される。オフのときは触れないようにする
+        void UpdateHoldEnabled()
+        {
+            chkFollow.Enabled = numSpeed.Enabled = chkHold.Checked;
         }
 
         // 修飾キーを指定しないときは、4 つのチェックは使えない
