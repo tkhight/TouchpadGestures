@@ -365,7 +365,7 @@ namespace TouchpadViewer
             numClickCount.Minimum = 1;
             numClickCount.Maximum = 5;
             Label clickNote = new Label { Text = "「キー」欄のキーを押したまま", AutoSize = true, Location = new Point(268, 100) };
-            chkHold.Text = "最後の1回を、指を離すまで押し続ける (回数2 = ダブルタップして押したまま)";
+            chkHold.Text = "ドラッグする (指を離すまで押し続ける。回数2 = ダブルタップしてドラッグ)";
             chkHold.AutoSize = true;
             chkHold.Location = new Point(100, 130);
             chkFollow.Text = "指の動きでカーソルを動かす";
