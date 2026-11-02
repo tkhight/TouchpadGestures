@@ -594,6 +594,7 @@ namespace TouchpadViewer
             Controls.Add(info);
 
             chkExec.Text = "ジェスチャーでキー操作を実行する (SendInput)";
+            chkExec.Checked = Gestures.ExecuteMemory.Load(AppContext.BaseDirectory);   // 前回のオン / オフから始める (未保存ならオフ)
             chkExec.Dock = DockStyle.Fill;
             chkExec.Padding = new Padding(8, 0, 0, 0);
 
@@ -955,7 +956,12 @@ namespace TouchpadViewer
             tray.DoubleClick += delegate { ShowFromTray(); };
             tray.Visible = true;
 
-            chkExec.CheckedChanged += delegate { UpdateTrayState(); if (!chkExec.Checked) ReleaseHolds(); };
+            chkExec.CheckedChanged += delegate
+            {
+                UpdateTrayState();
+                Gestures.ExecuteMemory.Save(AppContext.BaseDirectory, chkExec.Checked);
+                if (!chkExec.Checked) ReleaseHolds();
+            };
             UpdateTrayState();
         }
 
