@@ -64,7 +64,7 @@ Windows のタッチパッドで、**指ごとの動き**を使った独自の�
 2. (任意)`dotnet test Gestures.Tests` で、単体テストが全部通ることを確認します。
 3. `build_touchpadviewer.bat` を実行します。書き出して、トレイに常駐して起動します。
 
-> `build_touchpadviewer.bat` の書き出し先は、bat の中に書かれています。別の場所に置きたいときは、bat 内のパスを書き換えてください。
+> `build_touchpadviewer.bat` は、どのフォルダからでも実行できます(ソースの場所は bat 自身の場所から求めます)。書き出し先の既定は `%LOCALAPPDATA%\Programs\TouchpadGestures`(例: `C:\Users\<ユーザー名>\AppData\Local\Programs\TouchpadGestures`)です。別の場所に置きたいときは、引数で指定します(例: `build_touchpadviewer.bat C:\Apps\TouchpadGestures`)。
 
 ### 2-3. 使い始める手順
 
