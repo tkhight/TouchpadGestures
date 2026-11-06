@@ -49,6 +49,8 @@ public static class GestureConfig
           //   例: { "modifiers": "Ctrl", "fingers": 3, "slot": 0, "direction": "Left", "action": { ... } }
           // cooldownMs を付けると、その割り当てが動作を実行したあと、その時間 (ms) は同じ割り当ての次の発火を受け付けない (省略 = 抑制しない)
           //   例: { "fingers": 3, "slot": 0, "direction": "Left", "cooldownMs": 500, "action": { ... } }
+          // suppressClick を true にすると、その割り当てが動作を実行した直後 (250ms) の、Windows 標準のタップによるクリックを捨てる
+          //   (「1 本指でタップしてクリック」などと重なって、意図しないクリックが入るとき用。省略 = 捨てない)
           // "enabled": false を付けると、その割り当てだけを一時的に無効にできる (省略 = 有効)
           // app を付けると、そのアプリ (プロセス名。"chrome" / "Code.exe" など) が前面のときだけ有効になる。
           //   同じジェスチャーが app なしにもあるときは、app 付きが優先される。プロセス名は画面のログに [ ] で出る
@@ -396,7 +398,7 @@ public static class GestureConfig
                 spec = swipe;
             }
 
-            result.Add(new GestureBinding(spec, action!, app, mods, b.CooldownMs ?? 0));
+            result.Add(new GestureBinding(spec, action!, app, mods, b.CooldownMs ?? 0, b.SuppressClick == true, b.Fingers ?? 0));
         }
 
         if (errors.Count > 0) throw new GestureConfigException(errors);
@@ -597,6 +599,8 @@ public sealed class BindingEntry
     public bool? Protected { get; set; }
     /// <summary>この割り当てが動作を実行したあと、この時間 (ms) は、同じ割り当ての次の発火を受け付けない。省略 = 0 (抑制しない)。</summary>
     public long? CooldownMs { get; set; }
+    /// <summary>true なら、この割り当てが動作を実行した直後の、OS 標準のタップによるクリックを捨てる (マウスフックで)。省略 = 捨てない。</summary>
+    public bool? SuppressClick { get; set; }
     public int? Fingers { get; set; }
     public int? Slot { get; set; }
     public string? Direction { get; set; }
@@ -625,7 +629,7 @@ public sealed class BindingEntry
 
     public BindingEntry Clone() => new()
     {
-        Name = Name, App = App, Modifiers = Modifiers, Enabled = Enabled, Protected = Protected, CooldownMs = CooldownMs, Fingers = Fingers, Slot = Slot, Direction = Direction,
+        Name = Name, App = App, Modifiers = Modifiers, Enabled = Enabled, Protected = Protected, CooldownMs = CooldownMs, SuppressClick = SuppressClick, Fingers = Fingers, Slot = Slot, Direction = Direction,
         Motions = Motions is null ? null : new List<string?>(Motions),
         Pinch = Pinch, PinchDistance = PinchDistance, CentroidTolerance = CentroidTolerance,
         LandOrder = LandOrder is null ? null : new List<int>(LandOrder), LandMinGapMs = LandMinGapMs, LandMaxGapMs = LandMaxGapMs, LandMaxMove = LandMaxMove,

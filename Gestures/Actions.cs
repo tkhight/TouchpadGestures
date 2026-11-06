@@ -469,8 +469,10 @@ public static class AppNames
 /// Modifiers が null ならどの修飾キーの状態でも有効。値があれば、その修飾キーが「ちょうど」押されているときだけ有効
 /// (KeyModifiers.None は「どれも押していない」)。同じジェスチャーなら、条件の多い割り当てが優先される。
 /// CooldownMs が 0 より大きければ、この割り当てが動作を実行してから、その時間 (ms) は、同じ割り当ての次の発火を捨てる。
+/// SuppressClick が true なら、動作を実行したとき GestureDispatcher.LastSuppressClick が立つ (OS 標準のタップのクリックを捨てるための合図)。
+/// Fingers は設定の fingers (ClickGuard が、クリックを保留する場面を決めるのに使う)。
 /// </summary>
-public sealed record GestureBinding(IGestureSpec Spec, IGestureAction Action, string? App = null, KeyModifiers? Modifiers = null, long CooldownMs = 0)
+public sealed record GestureBinding(IGestureSpec Spec, IGestureAction Action, string? App = null, KeyModifiers? Modifiers = null, long CooldownMs = 0, bool SuppressClick = false, int Fingers = 0)
 {
     /// <summary>スワイプの定義のとき。それ以外は null。</summary>
     public SlotSwipeSpec? Swipe => Spec as SlotSwipeSpec;
@@ -505,6 +507,9 @@ public sealed class GestureDispatcher
 
     /// <summary>直近の Feed で、前面アプリが除外対象だったために、発火を抑制したか。</summary>
     public bool LastSuppressed { get; private set; }
+
+    /// <summary>直近の Feed で、SuppressClick の割り当てが動作を実行したか (実行しない設定のときは立たない)。</summary>
+    public bool LastSuppressClick { get; private set; }
 
     /// <summary>最後に発火したときに押されていた修飾キー。</summary>
     public KeyModifiers LastModifiers { get; private set; }
@@ -558,6 +563,7 @@ public sealed class GestureDispatcher
         LastApp = null;
         LastModifiers = KeyModifiers.None;
         LastSuppressed = false;
+        LastSuppressClick = false;
         var fired = new List<IGestureSpec>();
         if (hits.Count == 0) return fired;
 
@@ -583,6 +589,7 @@ public sealed class GestureDispatcher
             }
             for (int i = 0; i < count; i++) fired.Add(b.Spec);
             run.Add((b.Action, count, b.Modifiers));
+            if (execute && b.SuppressClick) LastSuppressClick = true;
         }
         if (execute)
             foreach (var (action, count, bindingMods) in run)

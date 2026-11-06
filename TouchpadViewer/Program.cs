@@ -407,6 +407,9 @@ namespace TouchpadViewer
         readonly CheckBox chkExec = new CheckBox();
         readonly Gestures.Win32InputSender sender = new Gestures.Win32InputSender();
         Gestures.GestureDispatcher dispatcher;
+        // suppressClick の割り当てがあるときだけ、マウスフックを入れる
+        readonly Gestures.ClickGuard clickGuard = new Gestures.ClickGuard();
+        // (保留したクリックの送り直しは、コンストラクタで sender につなぐ)
 
         // 疑似指モード: マウスで指を置き、実機と同じ経路 (分割レポート → 組み立て → 判定 → SendInput) に流す
         readonly CheckBox chkSim = new CheckBox();
@@ -474,6 +477,13 @@ namespace TouchpadViewer
                 ReleaseHolds();
                 dispatcher = new Gestures.GestureDispatcher(bindings, sender, Gestures.ForegroundApp.GetProcessName,
                     Gestures.KeyboardState.GetModifiers, Gestures.KeyboardState.GetHeldModifierKeys, ignoreApps);
+                try
+                {
+                    var suppress = System.Linq.Enumerable.ToList(System.Linq.Enumerable.Where(bindings, b => b.SuppressClick));
+                    clickGuard.SetHoldFingers(System.Linq.Enumerable.Select(suppress, b => b.Fingers));
+                    if (suppress.Count > 0) clickGuard.Install(); else clickGuard.Uninstall();
+                }
+                catch (Exception ex) { AddLog("クリックの抑制を有効にできません: " + ex.Message); }
                 AddLog("設定を読み込みました: " + bindings.Count + "件" +
                     (ignoreApps.Count == 0 ? "" : " (除外アプリ " + ignoreApps.Count + "件)"));
                 ok = true;
@@ -522,6 +532,7 @@ namespace TouchpadViewer
 
             Gestures.Frame frame = new Gestures.Frame(clock.ElapsedMilliseconds, contacts);
             if (contacts.Count == 0) repeatTotals.Clear();
+            if (clickGuard.IsInstalled) clickGuard.NoteContacts(contacts.Count, Environment.TickCount64);
 
             // 判定は、設定ファイルの割り当て (しきい値もそのまま) で常に行う。画面の表示もこの結果。
             // チェックが入っていないときは、SendInput による実行だけを行わない
@@ -536,6 +547,9 @@ namespace TouchpadViewer
                 AddLog("実行エラー: " + ex.Message);
                 return;
             }
+
+            // 実行した割り当てが suppressClick なら、直後の OS 標準のタップのクリックを捨てる
+            if (dispatcher.LastSuppressClick && clickGuard.IsInstalled) clickGuard.Arm(Environment.TickCount64);
 
             // 除外アプリで抑制したときは、ログにだけ残す (連続発火で流れないよう、1 秒に 1 回まで)
             if (dispatcher.LastSuppressed && clock.ElapsedMilliseconds - lastSuppressLogMs >= 1000)
@@ -639,6 +653,8 @@ namespace TouchpadViewer
             bar.Controls.Add(btnChoose);
             Controls.Add(bar);
 
+            clickGuard.Reinject = (right, down) => sender.MouseButtonEvent(
+                right ? Gestures.MouseButton.Right : Gestures.MouseButton.Left, down);
             timer.Interval = 16;
             timer.Tick += OnTick;
             timer.Start();
@@ -779,6 +795,7 @@ namespace TouchpadViewer
             // 実機は指が止まっていても一定間隔でレポートを送ってくる。疑似指もそれに合わせて流し続ける
             // (判定の「落ち着くまで待つ」などの時間条件が、フレームの到着で進むため)
             if (simMode && (simFingers.Count > 0 || simEmptyPending)) PushSim();
+            clickGuard.Tick(Environment.TickCount64);
 
             if (++tick >= 60) // 約1秒
             {
@@ -1275,6 +1292,7 @@ namespace TouchpadViewer
         protected override void OnFormClosed(FormClosedEventArgs e)
         {
             ReleaseHolds();
+            clickGuard.Dispose();
             foreach (PtpDevice d in devices.Values) if (d != null) d.Dispose();
             devices.Clear();
             base.OnFormClosed(e);

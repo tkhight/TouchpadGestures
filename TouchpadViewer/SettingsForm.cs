@@ -50,6 +50,7 @@ namespace TouchpadViewer
         readonly NumericUpDown numFingers = new NumericUpDown();
         readonly CheckBox chkEnabled = new CheckBox();
         readonly CheckBox chkProtected = new CheckBox();
+        readonly CheckBox chkSuppressClick = new CheckBox();
         readonly CheckBox chkUseMods = new CheckBox();
         readonly CheckBox chkCtrl = new CheckBox();
         readonly CheckBox chkAlt = new CheckBox();
@@ -285,7 +286,7 @@ namespace TouchpadViewer
             // タップ
             grpTap.Text = "タップ";
             grpTap.Width = 520;
-            grpTap.Height = 70;
+            grpTap.Height = 98;
             grpTap.Controls.Add(new Label { Text = "タップする指", AutoSize = true, Location = new Point(10, 30) });
             cboTapSlot.DropDownStyle = ComboBoxStyle.DropDownList;
             cboTapSlot.Location = new Point(100, 26);
@@ -298,6 +299,10 @@ namespace TouchpadViewer
             numTapCount.Maximum = 5;
             grpTap.Controls.Add(numTapCount);
             grpTap.Controls.Add(new Label { Text = "(ほかの指は触れたまま)", AutoSize = true, Location = new Point(350, 30) });
+            chkSuppressClick.Text = "Windows 標準のタップのクリックを捨てる (重なってクリックが入るとき)";
+            chkSuppressClick.AutoSize = true;
+            chkSuppressClick.Location = new Point(10, 62);
+            grpTap.Controls.Add(chkSuppressClick);
             flow.Controls.Add(grpTap);
 
             // ピンチ
@@ -434,6 +439,7 @@ namespace TouchpadViewer
             cboApp.DropDown += delegate { RefillAppChoices(); };
             chkEnabled.CheckedChanged += changed;
             chkProtected.CheckedChanged += changed;
+            chkSuppressClick.CheckedChanged += changed;
             chkUseMods.CheckedChanged += delegate { UpdateModsEnabled(); if (!loading && cur != null) Apply(); };
             chkCtrl.CheckedChanged += changed;
             chkAlt.CheckedChanged += changed;
@@ -816,6 +822,7 @@ namespace TouchpadViewer
             cboApp.Text = e.App ?? "";
             chkEnabled.Checked = e.Enabled != false;
             chkProtected.Checked = e.Protected == true;
+            chkSuppressClick.Checked = e.SuppressClick == true;
             KeyModifiers? mods = null;
             try { mods = KeyModifierNames.ParseOrNull(e.Modifiers); }
             catch (FormatException) { }
@@ -921,6 +928,7 @@ namespace TouchpadViewer
             e.App = NullIfEmpty(cboApp.Text);
             e.Enabled = chkEnabled.Checked ? (bool?)null : false;
             e.Protected = chkProtected.Checked ? true : (bool?)null;
+            e.SuppressClick = chkSuppressClick.Checked ? true : (bool?)null;
             if (chkUseMods.Checked)
             {
                 KeyModifiers m = KeyModifiers.None;
